@@ -1,6 +1,7 @@
-node_modules
-llama server
-dist
-build
-docs
-aimodels
+node_modules/
+llama server/
+dist/
+build/
+docs/
+aimodels/
+.claude

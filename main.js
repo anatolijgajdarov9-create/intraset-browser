@@ -46,7 +46,7 @@ async function unloadAiModel() {
 // ─── Helper: run one model for a single non-streaming inference ──────────────
 // Spawns llama-server, waits for ready, sends one /v1/chat/completions request
 // (stream:false), collects the full response, kills the server, returns text.
-async function runModelOnce(modelPath, resolvedSrv, messages, contextSize, gpuLayers) {
+async function runModelOnce(modelPath, resolvedSrv, messages, contextSize, gpuLayers, onServerReady) {
   const port = await getFreePort();
   return new Promise((resolve) => {
     let proc;
@@ -75,6 +75,7 @@ async function runModelOnce(modelPath, resolvedSrv, messages, contextSize, gpuLa
     const doInference = () => {
       if (started) return;
       started = true;
+      try { if (onServerReady) onServerReady(); } catch (_) {}
       const body = JSON.stringify({
         messages, stream: false, max_tokens: 1200,
         temperature: aiTemperature, top_p: aiTopP
@@ -1149,20 +1150,24 @@ ipcMain.handle('ai-ensemble-chat', async (_event, { message, modelPaths, serverP
   ];
   const bundledSrv = srvCandidates.find(p => fs.existsSync(p)) || srvCandidates[0];
   const srvPath = serverPath ? path.normalize(serverPath) : '';
-  const isValidSrv = srvPath && !srvPath.toLowerCase().endsWith('.gguf') && fs.existsSync(srvPath);
+  const isValidSrv = srvPath && srvPath !== '.' && !srvPath.toLowerCase().endsWith('.gguf') && fs.existsSync(srvPath);
   const resolvedSrv = isValidSrv ? srvPath : (fs.existsSync(bundledSrv) ? bundledSrv : '');
-  if (!resolvedSrv) return { success: false, error: 'llama-server не найден' };
+  if (!resolvedSrv || !fs.existsSync(resolvedSrv)) return { success: false, error: `llama-server не найден. Пути: ${srvCandidates.join(', ')}` };
 
   const sendProgress = (data) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-ensemble-progress', data);
   };
 
   const modelResponses = [];
+  const modelErrors = [];
 
   // ── Run each model ────────────────────────────────────────────────────────
   for (let i = 0; i < modelPaths.length; i++) {
     const mPath = modelPaths[i];
-    if (!fs.existsSync(mPath)) continue;
+    if (!fs.existsSync(mPath)) {
+      modelErrors.push(`${path.basename(mPath)}: файл не найден`);
+      continue;
+    }
     const mName = path.basename(mPath);
     sendProgress({ phase: 'model', modelName: mName, step: i + 1, total: modelPaths.length });
 
@@ -1170,15 +1175,22 @@ ipcMain.handle('ai-ensemble-chat', async (_event, { message, modelPaths, serverP
       { role: 'system', content: 'Ты опытный эксперт. Дай развёрнутый, точный ответ на вопрос пользователя. Отвечай на русском языке.' },
       { role: 'user', content: message }
     ];
-    const result = await runModelOnce(mPath, resolvedSrv, messages, contextSize, gpuLayers);
-    if (result.success && result.text) {
+    const result = await runModelOnce(mPath, resolvedSrv, messages, contextSize, gpuLayers, () => {
+      sendProgress({ phase: 'model_ready', modelName: mName, step: i + 1, total: modelPaths.length });
+    });
+    if (result.success && result.text.trim()) {
       modelResponses.push({ modelName: mName, response: result.text });
       if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send('ai-ensemble-model-done', { modelName: mName, response: result.text });
+    } else {
+      modelErrors.push(`${mName}: ${result.error || 'пустой ответ'}`);
+      sendProgress({ phase: 'model_error', modelName: mName, step: i + 1, total: modelPaths.length, error: result.error });
     }
   }
 
-  if (modelResponses.length === 0) return { success: false, error: 'Ни одна модель не дала ответ' };
+  if (modelResponses.length === 0) {
+    return { success: false, error: `Ни одна модель не дала ответ. ${modelErrors.join(' | ')}` };
+  }
 
   // ── Synthesize ────────────────────────────────────────────────────────────
   sendProgress({ phase: 'synthesize', step: modelPaths.length, total: modelPaths.length });

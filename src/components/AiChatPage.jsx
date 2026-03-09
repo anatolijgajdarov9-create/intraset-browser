@@ -92,31 +92,38 @@ const STAGE_ICONS = {
 function ProcessingPipeline({ stages, visible, onToggle }) {
   if (!stages.length) return null;
   const activeStage = stages.find(s => s.status === 'active');
-  const allDone = stages.every(s => s.status === 'done');
+  const hasError = stages.some(s => s.status === 'error');
+  const hasCancelled = !hasError && stages.some(s => s.status === 'cancelled') && !activeStage;
+  const allDone = !hasError && !hasCancelled && stages.every(s => s.status === 'done');
+  const bgColor = hasError ? '#fff5f5' : hasCancelled ? '#f8fafc' : allDone ? '#f0fdf4' : '#f8fafc';
 
   return (
     <div style={{
-      borderBottom: '1px solid #e2e8f0', background: allDone ? '#f0fdf4' : '#f8fafc',
+      borderBottom: '1px solid #e2e8f0', background: bgColor,
       padding: '10px 20px 12px', flexShrink: 0, transition: 'background 0.4s'
     }}>
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: visible ? 12 : 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {!allDone && activeStage && (
+          {hasError && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }}/>}
+          {hasCancelled && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#94a3b8', flexShrink: 0 }}/>}
+          {allDone && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }}/>}
+          {!hasError && !hasCancelled && !allDone && activeStage && (
             <div style={{
               width: 8, height: 8, borderRadius: '50%',
               border: '2px solid #2563eb', borderTopColor: 'transparent',
               animation: 'aiSearchSpin 0.7s linear infinite', flexShrink: 0
             }}/>
           )}
-          {allDone && (
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }}/>
-          )}
-          <span style={{ fontSize: 11, fontWeight: 700, color: allDone ? '#15803d' : '#475569' }}>
-            {allDone
+          <span style={{ fontSize: 11, fontWeight: 700, color: hasError ? '#dc2626' : hasCancelled ? '#64748b' : allDone ? '#15803d' : '#475569' }}>
+            {hasError
+              ? 'Ошибка обработки'
+              : hasCancelled
+              ? 'Остановлено'
+              : allDone
               ? 'Обработка завершена'
               : activeStage
-                ? `${activeStage.label}...`
+                ? `${activeStage.label}${activeStage.detail ? ' · ' + activeStage.detail : '...'}`
                 : 'Подготовка...'
             }
           </span>
@@ -140,9 +147,13 @@ function ProcessingPipeline({ stages, visible, onToggle }) {
             const isDone = stage.status === 'done';
             const isActive = stage.status === 'active';
             const isPending = stage.status === 'pending';
-            const circleColor = isDone ? '#22c55e' : isActive ? '#2563eb' : '#e2e8f0';
-            const iconColor = isDone ? 'white' : isActive ? 'white' : '#cbd5e1';
-            const labelColor = isDone ? '#16a34a' : isActive ? '#2563eb' : '#94a3b8';
+            const isError = stage.status === 'error';
+            const isCancelled = stage.status === 'cancelled';
+
+            const circleColor = isDone ? '#22c55e' : isActive ? '#2563eb' : isError ? '#ef4444' : isCancelled ? '#94a3b8' : '#e2e8f0';
+            const borderColor = isActive ? '#93c5fd' : isDone ? '#86efac' : isError ? '#fca5a5' : isCancelled ? '#cbd5e1' : '#e2e8f0';
+            const iconColor = (isDone || isActive || isError) ? 'white' : '#cbd5e1';
+            const labelColor = isDone ? '#16a34a' : isActive ? '#2563eb' : isError ? '#dc2626' : isCancelled ? '#64748b' : '#94a3b8';
 
             return (
               <React.Fragment key={stage.id}>
@@ -152,7 +163,7 @@ function ProcessingPipeline({ stages, visible, onToggle }) {
                   <div style={{
                     width: 38, height: 38, borderRadius: '50%', flexShrink: 0,
                     background: circleColor,
-                    border: isActive ? '3px solid #93c5fd' : isDone ? '3px solid #86efac' : '3px solid #e2e8f0',
+                    border: `3px solid ${borderColor}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     animation: isActive ? 'pipelinePulse 1.8s ease-in-out infinite' : 'none',
                     transition: 'all 0.35s ease',
@@ -161,6 +172,14 @@ function ProcessingPipeline({ stages, visible, onToggle }) {
                     {isDone ? (
                       <svg width="16" height="16" fill="none" stroke="white" viewBox="0 0 24 24" strokeWidth="2.5">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
+                      </svg>
+                    ) : isError ? (
+                      <svg width="14" height="14" fill="none" stroke="white" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                      </svg>
+                    ) : isCancelled ? (
+                      <svg width="12" height="12" fill="none" stroke="white" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M18 12H6"/>
                       </svg>
                     ) : isActive ? (
                       <div style={{ width: 13, height: 13, borderRadius: '50%', border: '2.5px solid white', borderTopColor: 'transparent', animation: 'aiSearchSpin 0.75s linear infinite' }}/>
@@ -177,29 +196,32 @@ function ProcessingPipeline({ stages, visible, onToggle }) {
                     {stage.label}
                   </div>
 
-                  {/* Active progress bar */}
+                  {/* Sub-label (detail) */}
+                  {stage.detail && (
+                    <div style={{ fontSize: 9, color: isError ? '#ef4444' : '#94a3b8', marginTop: 1, textAlign: 'center', maxWidth: 80, lineHeight: 1.2 }}>
+                      {stage.detail}
+                    </div>
+                  )}
+
+                  {/* Status bar */}
                   {isActive && (
-                    <div style={{ width: 52, height: 3, background: '#dbeafe', borderRadius: 2, marginTop: 5, overflow: 'hidden', position: 'relative' }}>
+                    <div style={{ width: 52, height: 3, background: '#dbeafe', borderRadius: 2, marginTop: 4, overflow: 'hidden', position: 'relative' }}>
                       <div className="ai-indeterminate" style={{
                         position: 'absolute', top: 0, height: '100%', width: '45%',
-                        background: 'linear-gradient(90deg,transparent,#2563eb,transparent)',
-                        borderRadius: 2
+                        background: 'linear-gradient(90deg,transparent,#2563eb,transparent)', borderRadius: 2
                       }}/>
                     </div>
                   )}
-                  {isDone && (
-                    <div style={{ width: 52, height: 3, background: '#bbf7d0', borderRadius: 2, marginTop: 5 }}/>
-                  )}
-                  {isPending && (
-                    <div style={{ width: 52, height: 3, background: '#f1f5f9', borderRadius: 2, marginTop: 5 }}/>
-                  )}
+                  {isDone && <div style={{ width: 52, height: 3, background: '#bbf7d0', borderRadius: 2, marginTop: 4 }}/>}
+                  {isError && <div style={{ width: 52, height: 3, background: '#fecaca', borderRadius: 2, marginTop: 4 }}/>}
+                  {(isPending || isCancelled) && <div style={{ width: 52, height: 3, background: '#f1f5f9', borderRadius: 2, marginTop: 4 }}/>}
                 </div>
 
                 {/* Connector */}
                 {si < stages.length - 1 && (
                   <div style={{
                     width: 20, height: 3, marginTop: 17, flexShrink: 0,
-                    background: isDone ? '#86efac' : isActive ? 'linear-gradient(90deg,#93c5fd,#e2e8f0)' : '#e2e8f0',
+                    background: isDone ? '#86efac' : isError ? '#fca5a5' : isActive ? 'linear-gradient(90deg,#93c5fd,#e2e8f0)' : '#e2e8f0',
                     borderRadius: 2, transition: 'background 0.3s'
                   }}/>
                 )}
@@ -235,6 +257,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   // ── Pipeline animation state ──────────────────────────────────────────────
   const [pipelineVisible, setPipelineVisible] = useState(true);
   const [pipelineStages, setPipelineStages] = useState([]); // [{id,label,type,status,detail?}]
+  const pipelineResultRef = useRef(null); // 'success' | 'error' | 'cancelled'
 
   // ── Ensemble mode state ──────────────────────────────────────────────────
   const [ensembleFolder, setEnsembleFolder] = useState(() => localStorage.getItem('intra-ensemble-folder') || '');
@@ -257,7 +280,14 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   // Finalize pipeline when generation ends
   useEffect(() => {
     if (!aiLoading && pipelineStages.length > 0) {
-      setPipelineStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'done' } : s));
+      const res = pipelineResultRef.current;
+      const activeStatus = res === 'error' ? 'error' : res === 'cancelled' ? 'cancelled' : 'done';
+      setPipelineStages(prev => prev.map(s =>
+        s.status === 'active' ? { ...s, status: activeStatus } :
+        // pending stages that were skipped due to error → mark skipped
+        (s.status === 'pending' && (res === 'error' || res === 'cancelled')) ? { ...s, status: 'cancelled' } :
+        s
+      ));
     }
   }, [aiLoading]); // eslint-disable-line
 
@@ -281,11 +311,13 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
       });
     });
     const offDone = window.electronAPI.onAiDone(() => {
+      pipelineResultRef.current = 'success';
       setAiLoading(false);
       setAiStreamedTokens(0);
       setAiChat(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, streaming: false } : m));
     });
     const offError = window.electronAPI.onAiError((msg) => {
+      pipelineResultRef.current = 'error';
       setAiLoading(false);
       setAiStreamedTokens(0);
       setAiChat(prev => [...prev, { role: 'bot', text: `Ошибка: ${msg}` }]);
@@ -319,19 +351,34 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
     const offEnsembleProgress = window.electronAPI.onAiEnsembleProgress?.((data) => {
       setEnsembleProgress(data);
       if (data.phase === 'model') {
+        // New model starts loading
         setPipelineStages(prev => prev.map((s, i) => {
-          if (s.id === `model-${data.step - 1}`) return { ...s, status: 'active', detail: data.modelName };
+          if (s.id === `model-${data.step - 1}`) return { ...s, status: 'active', detail: 'Загружаю...' };
           if (i < data.step - 1 && s.id.startsWith('model-')) return { ...s, status: 'done' };
           return s;
         }));
         setAiChat(prev => [...prev.filter(m => m.role !== 'status'), {
           role: 'status',
-          text: `Модель ${data.step}/${data.total}: ${data.modelName}...`
+          text: `Модель ${data.step}/${data.total}: загружаю ${data.modelName}...`
         }]);
+      } else if (data.phase === 'model_ready') {
+        // Model loaded, now inferring
+        setPipelineStages(prev => prev.map(s =>
+          s.id === `model-${data.step - 1}` ? { ...s, detail: 'Генерирует...' } : s
+        ));
+        setAiChat(prev => [...prev.filter(m => m.role !== 'status'), {
+          role: 'status',
+          text: `Модель ${data.step}/${data.total}: генерирует ответ...`
+        }]);
+      } else if (data.phase === 'model_error') {
+        // Model failed
+        setPipelineStages(prev => prev.map(s =>
+          s.id === `model-${data.step - 1}` ? { ...s, status: 'error', detail: data.error?.slice(0, 30) } : s
+        ));
       } else if (data.phase === 'synthesize') {
         setPipelineStages(prev => prev.map(s =>
-          s.id === 'synthesize' ? { ...s, status: 'active' } :
-          s.id.startsWith('model-') ? { ...s, status: 'done' } : s
+          s.id === 'synthesize' ? { ...s, status: 'active', detail: 'Синтез...' } :
+          s.id.startsWith('model-') && s.status === 'active' ? { ...s, status: 'done' } : s
         ));
         setAiChat(prev => [...prev.filter(m => m.role !== 'status'), {
           role: 'status', text: 'Синтезирую ответы всех моделей...'
@@ -419,6 +466,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
 
   const handleStop = () => {
     cancelledRef.current = true;
+    pipelineResultRef.current = 'cancelled';
     if (isElectron) window.electronAPI.aiAbort();
     setAiLoading(false);
     setIsSearching(false);
@@ -496,8 +544,11 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
       setEnsembleProgress(null);
       removeStatus();
       if (!result?.success) {
+        pipelineResultRef.current = 'error';
         setAiLoading(false);
         setAiChat(prev => [...prev, { role: 'bot', text: `Ошибка ансамбля: ${result?.error || ''}` }]);
+      } else {
+        pipelineResultRef.current = 'success';
       }
 
     } else if (deepThinkMode && isElectron) {
