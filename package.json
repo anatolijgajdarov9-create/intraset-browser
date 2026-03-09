@@ -1,0 +1,67 @@
+{
+  "name": "intra-browser",
+  "version": "1.0.0",
+  "description": "Intra — браузер для интранет сетей",
+  "main": "main.js",
+  "scripts": {
+    "start": "concurrently \"vite --port 3000\" \"wait-on tcp:3000 && electron --disable-gpu .\"",
+    "build": "node scripts/setup-wincse.js && vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "electron": "electron --disable-gpu .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "concurrently": "^8.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4",
+    "vite": "^5.0.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.intra.browser",
+    "productName": "Intra Browser",
+    "icon": "intrabrowser-logo.png",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "build/**",
+      "main.js",
+      "preload.js",
+      "context-menu.html",
+      "context-menu-preload.js",
+      "browser-preload.js",
+      "package.json",
+      "intrabrowser-logo.ico",
+      "intrabrowser-logo.png"
+    ],
+    "extraResources": [
+      {
+        "from": "llama server",
+        "to": "llama server"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "sign": null,
+      "icon": "intrabrowser-logo.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

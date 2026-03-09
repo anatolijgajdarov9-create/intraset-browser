@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: transparent;
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    width: 100%; height: 100%;
+  }
+  .wrap {
+    padding: 8px;
+    height: 100%;
+    position: relative;
+  }
+  .menu {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 5px 0;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.13), 0 2px 8px rgba(0,0,0,0.07);
+    animation: pop 0.1s ease;
+    width: 274px;
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    bottom: 8px;
+    overflow: hidden;
+  }
+  .submenu-panel {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 5px 0;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.13), 0 2px 8px rgba(0,0,0,0.07);
+    position: absolute;
+    left: 298px;
+    width: 210px;
+    display: none;
+    z-index: 10;
+  }
+  .submenu-panel.visible { display: block; }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.96) translateY(-3px); }
+    to   { opacity: 1; transform: scale(1)    translateY(0);    }
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    font-size: 12.5px;
+    color: #1e293b;
+    cursor: default;
+    -webkit-user-select: none;
+    font-weight: 500;
+    position: relative;
+  }
+  .item:hover { background: #f8fafc; }
+  .item.has-submenu:hover { background: #eff6ff; }
+  .item.disabled { color: #b0bec5; pointer-events: none; }
+  .item.ai-item { color: #2563eb; }
+  .item.ai-item:hover { background: #eff6ff; }
+  .sep {
+    height: 1px;
+    background: #f1f5f9;
+    margin: 4px 0;
+  }
+  .icon {
+    width: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: #64748b;
+  }
+  .ai-item .icon { color: #2563eb; }
+  .label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .arrow { color: #94a3b8; font-size: 9px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="menu" id="menu"></div>
+  <div class="submenu-panel" id="submenu-panel"></div>
+</div>
+<script>
+const SVG = {
+  'go-back':    '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>',
+  'go-forward': '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
+  'reload':     '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>',
+  'open-new-tab': '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>',
+  'open-private-tab': '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>',
+  'copy-link':  '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
+  'copy':       '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
+  'cut':        '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="6" cy="20" r="2"/><circle cx="6" cy="4" r="2"/><line x1="6" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="21" y2="21"/><line x1="6" y1="18" x2="21" y2="3"/></svg>',
+  'paste':      '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>',
+  'copy-url':   '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>',
+  'search-text':'<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>',
+  'save-image': '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>',
+  'devtools':   '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>',
+  'ai-analyze': '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>',
+  'ai-summarize': '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h10"/></svg>',
+  'ai-theses':    '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
+  'ai-explain':   '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 16v-4M12 8h.01"/></svg>',
+};
+
+let hideSubmenuTimer = null;
+const submenuPanel = document.getElementById('submenu-panel');
+
+function showSubmenu(children, itemEl) {
+  clearTimeout(hideSubmenuTimer);
+  submenuPanel.innerHTML = '';
+
+  children.forEach(child => {
+    const el = document.createElement('div');
+    el.className = 'item ai-item';
+
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'icon';
+    iconDiv.innerHTML = SVG[child.iconKey] || SVG['ai-analyze'] || '';
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = child.label;
+
+    el.appendChild(iconDiv);
+    el.appendChild(label);
+
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      window.ctxMenu.select(child.action, child.payload || null);
+    });
+    submenuPanel.appendChild(el);
+  });
+
+  const rect = itemEl.getBoundingClientRect();
+  submenuPanel.style.top = Math.max(8, rect.top) + 'px';
+  submenuPanel.classList.add('visible');
+}
+
+function hideSubmenu() {
+  hideSubmenuTimer = setTimeout(() => {
+    submenuPanel.classList.remove('visible');
+  }, 120);
+}
+
+submenuPanel.addEventListener('mouseenter', () => clearTimeout(hideSubmenuTimer));
+submenuPanel.addEventListener('mouseleave', hideSubmenu);
+
+window.ctxMenu.onShow((items) => {
+  const menu = document.getElementById('menu');
+  menu.innerHTML = '';
+
+  items.forEach(item => {
+    if (item.type === 'separator') {
+      const sep = document.createElement('div');
+      sep.className = 'sep';
+      menu.appendChild(sep);
+      return;
+    }
+
+    const el = document.createElement('div');
+    const isSubmenu = item.type === 'submenu';
+    const isAi = item.isAi || isSubmenu;
+    el.className = 'item' +
+      (item.enabled === false ? ' disabled' : '') +
+      (isSubmenu ? ' has-submenu' : '') +
+      (isAi ? ' ai-item' : '');
+
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'icon';
+    iconDiv.innerHTML = SVG[item.iconKey || item.action] || '';
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = item.label;
+
+    el.appendChild(iconDiv);
+    el.appendChild(label);
+
+    if (item.shortcut) {
+      const sc = document.createElement('span');
+      sc.textContent = item.shortcut;
+      sc.style.cssText = 'color:#94a3b8;font-size:11px;flex-shrink:0;margin-left:16px';
+      el.appendChild(sc);
+    }
+
+    if (isSubmenu && item.children?.length) {
+      const arrow = document.createElement('span');
+      arrow.className = 'arrow';
+      arrow.textContent = '▶';
+      el.appendChild(arrow);
+
+      el.addEventListener('mouseenter', () => showSubmenu(item.children, el));
+      el.addEventListener('mouseleave', hideSubmenu);
+    } else if (item.enabled !== false) {
+      el.addEventListener('mouseenter', () => {
+        clearTimeout(hideSubmenuTimer);
+        hideSubmenu();
+      });
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        window.ctxMenu.select(item.action, item.payload || null);
+      });
+    }
+
+    menu.appendChild(el);
+  });
+});
+
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.item') && !e.target.closest('.submenu-panel')) {
+    window.ctxMenu.close();
+  }
+});
+</script>
+</body>
+</html>

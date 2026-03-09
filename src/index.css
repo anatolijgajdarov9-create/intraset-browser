@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Основные цвета (светлая тема) */
+  --bg-primary:   #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary:  #f1f5f9;
+  --bg-hover:     #f8fafc;
+  --bg-active:    #eff6ff;
+
+  /* Границы */
+  --border-subtle: rgba(0, 0, 0, 0.04);
+  --border-normal: #e2e8f0;
+  --border-accent: #dbeafe;
+
+  /* Текст */
+  --text-primary:   #1e293b;
+  --text-secondary: #475569;
+  --text-muted:     #94a3b8;
+  --text-accent:    #2563eb;
+
+  /* Акцент */
+  --accent:       #2563eb;
+  --accent-light: #eff6ff;
+  --accent-hover: #1d4ed8;
+
+  /* Статусы */
+  --status-ok:   #22c55e;
+  --status-warn: #f59e0b;
+  --status-err:  #ef4444;
+
+  /* Размеры UI */
+  --tabbar-height:   38px;
+  --navbar-height:   46px;
+  --bookmarks-height: 32px;
+  --sidebar-width:   56px;
+
+  /* Типографика */
+  --font-ui:   'Manrope', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+html, body, #root {
+  height: 100%; overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-normal); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+::selection { background: rgba(37,99,235,0.15); color: var(--text-primary); }
+
+@keyframes fadeIn       { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeUp       { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes sideSlide    { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes tabSpin      { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes pulse-glow   { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+@keyframes ai-indeterminate { 0% { left: -35%; } 100% { left: 110%; } }
+
+.fade-up { animation: fadeUp 0.35s ease forwards; }
+.ai-indeterminate { animation: ai-indeterminate 1.4s ease-in-out infinite; }
+
+/* Compact UI mode */
+body.intra-compact { font-size: 12px; }
+body.intra-compact ::-webkit-scrollbar { width: 4px; height: 4px; }

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const pkg=require\\(''./package.json''\\); console.log\\(''electron:'', pkg.devDependencies?.electron || pkg.dependencies?.electron\\); console.log\\(''wllama:'', pkg.dependencies?.[''@wllama/wllama'']\\);\")",
+      "Bash(python3 -c:*)",
+      "Bash(node check_wasm.js)",
+      "Bash(node check_wasm3.js)",
+      "Bash(node check_single.js)",
+      "Bash(node check_heap.js)",
+      "Bash(node check_zero.js)",
+      "Bash(npm run build)",
+      "Bash(node -e \":*)"
+    ]
+  }
+}
