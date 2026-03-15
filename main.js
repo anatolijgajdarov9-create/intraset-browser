@@ -1,6 +1,9 @@
 const { app, BrowserWindow, BrowserView, ipcMain, shell, dialog, Menu, clipboard, screen } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const isDev = !app.isPackaged;
+
+console.log('[MAIN] App starting... isDev:', isDev, 'isPackaged:', app.isPackaged);
 
 let mainWindow;
 let browserViews = new Map(); // tabId -> BrowserView
@@ -9,8 +12,56 @@ let activeTabId = null;
 let sidebarPanelOpen = false;
 let contextMenuWin = null;    // custom context menu overlay window
 
+// Downloads storage (global)
+const downloads = new Map(); // downloadId -> { id, filename, url, savePath, receivedBytes, totalBytes, state, startTime }
+let downloadIdCounter = 0;
+const DOWNLOAD_DEBUG = true; // Включить диагностический лог для загрузок
+let pendingSavePath = null;  // Ожидающий путь для сохранения изображения (save-image)
+
+// Файл для сохранения загрузок
+let downloadsFilePath = '';
+
+function getDownloadsFilePath() {
+  if (!downloadsFilePath) {
+    downloadsFilePath = path.join(app.getPath('userData'), 'downloads.json');
+    console.log('[Download-DBG] downloadsFilePath:', downloadsFilePath);
+  }
+  return downloadsFilePath;
+}
+
+function saveDownloadsToFile() {
+  try {
+    const data = {
+      downloadIdCounter,
+      downloads: Array.from(downloads.values())
+    };
+    fs.writeFileSync(getDownloadsFilePath(), JSON.stringify(data, null, 2));
+    if (DOWNLOAD_DEBUG) console.log('[Download-DBG] Downloads saved to file, count:', downloads.size);
+  } catch (err) {
+    console.error('[Download-DBG] Error saving downloads:', err);
+  }
+}
+
+function loadDownloadsFromFile() {
+  try {
+    const filePath = getDownloadsFilePath();
+    console.log('[Download-DBG] Loading downloads from:', filePath);
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      downloadIdCounter = data.downloadIdCounter || 0;
+      data.downloads?.forEach(dl => downloads.set(dl.id, dl));
+      console.log('[Download-DBG] Downloads loaded from file:', downloads.size);
+    } else {
+      console.log('[Download-DBG] No downloads file found');
+    }
+  } catch (err) {
+    console.error('[Download-DBG] Error loading downloads:', err);
+  }
+}
+
+console.log('[MAIN] Downloads Map initialized');
+
 // ─── AI state (llama-server subprocess + HTTP streaming) ─────────────────────
-const fs             = require('fs');
 const net            = require('net');
 const http           = require('http');
 const https          = require('https');
@@ -154,6 +205,7 @@ const TABBAR_HEIGHT   = 38;
 const NAVBAR_HEIGHT   = 46;
 
 function createMainWindow() {
+  console.log('[MAIN] createMainWindow called');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -162,6 +214,7 @@ function createMainWindow() {
     frame: false,
     backgroundColor: '#ffffff',
     icon: path.join(__dirname, 'intrabrowser-logo.ico'),
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -170,17 +223,103 @@ function createMainWindow() {
     },
   });
 
+  let shown = false;
+  const tryShow = () => {
+    if (!shown && mainWindow && !mainWindow.isDestroyed()) {
+      shown = true;
+      console.log('[MAIN] MainWindow ready to show!');
+      mainWindow.show();
+    }
+  };
+
+  mainWindow.once('ready-to-show', tryShow);
+  mainWindow.webContents.once('did-finish-load', tryShow);
+
   if (isDev) {
-    mainWindow.webContents.session.clearCache().then(() => {
-      mainWindow.loadURL('http://localhost:3000');
-    });
+    console.log('[MAIN] Loading dev URL: http://localhost:3000');
+    mainWindow.loadURL('http://localhost:3000');
   } else {
+    console.log('[MAIN] Loading prod file:', path.join(__dirname, 'build', 'index.html'));
     mainWindow.loadFile(path.join(__dirname, 'build', 'index.html'));
   }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
     browserViews.clear();
+  });
+
+  // Глобальный обработчик загрузок для всех сессий (включая домашнюю страницу)
+  mainWindow.webContents.session.on('will-download', (event, item) => {
+    console.log('[Download-DBG] ★★★ GLOBAL will-download EVENT FIRED ★★★ item:', item.getFilename());
+    const tabId = activeTabId || 'home';
+    try {
+      const downloadId = `dl-${++downloadIdCounter}`;
+      const filename = item.getFilename();
+      const url = item.getURL();
+      const totalBytes = item.getTotalBytes();
+      
+      if (pendingSavePath) {
+        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] will-download: save-image detected, applying pendingSavePath:', pendingSavePath);
+        item.setSavePath(pendingSavePath);
+        pendingSavePath = null;
+      }
+      
+      const dl = {
+        id: downloadId,
+        filename,
+        url,
+        savePath: null,
+        receivedBytes: 0,
+        totalBytes: totalBytes || 0,
+        state: 'progressing',
+        startTime: Date.now(),
+      };
+      downloads.set(downloadId, dl);
+      saveDownloadsToFile();
+      console.log('[Download-DBG] Download added to Map. Total downloads:', downloads.size, 'download:', dl);
+
+      // Отправляем событие сразу и через setImmediate
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-started', { tabId, download: dl });
+        console.log('[Download-DBG] download-started sent (direct)');
+        setImmediate(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download-started', { tabId, download: dl });
+            console.log('[Download-DBG] download-started sent (setImmediate)');
+          }
+        });
+      }
+
+      item.on('updated', (e, state) => {
+        dl.receivedBytes = item.getReceivedBytes();
+        dl.totalBytes = item.getTotalBytes();
+        dl.state = state === 'completed' ? 'completed' : 'progressing';
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          setImmediate(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('download-updated', { tabId, download: dl });
+            }
+          });
+        }
+      });
+
+      item.on('done', (e, state) => {
+        dl.receivedBytes = item.getReceivedBytes();
+        dl.totalBytes = item.getTotalBytes();
+        dl.state = state === 'completed' ? 'completed' : (state === 'cancelled' ? 'cancelled' : 'interrupted');
+        dl.savePath = item.getSavePath();
+        saveDownloadsToFile();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          setImmediate(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('download-updated', { tabId, download: dl });
+            }
+          });
+        }
+      });
+    } catch (err) {
+      console.error('[Download] error:', err);
+    }
   });
 
   mainWindow.on('resize', () => {
@@ -204,6 +343,7 @@ function resizeBrowserView(view) {
 }
 
 function setupBrowserViewEvents(view, tabId) {
+  console.log('[Download-DBG] setupBrowserViewEvents called for tabId:', tabId);
   view.webContents.on('did-navigate', (_e, navUrl) => {
     mainWindow.webContents.send('tab-navigated', { tabId, url: navUrl });
   });
@@ -229,6 +369,93 @@ function setupBrowserViewEvents(view, tabId) {
       canGoForward: view.webContents.canGoForward()
     });
   });
+
+  // Downloads handling - используем session-level обработчик
+  console.log('[Download-DBG] Setting up will-download listener for tabId:', tabId);
+  view.webContents.session.on('will-download', (event, item) => {
+    console.log('[Download-DBG] ★★★ SESSION will-download EVENT FIRED ★★★ for tabId:', tabId, 'item:', item.getFilename());
+    console.log('[Download-DBG] mainWindow webContents isReady:', mainWindow?.webContents?.isLoading?.() === false ? 'ready' : 'not ready');
+    try {
+      const downloadId = `dl-${++downloadIdCounter}`;
+      const filename = item.getFilename();
+      const url = item.getURL();
+      const totalBytes = item.getTotalBytes();
+      
+      // Если есть ожидающий путь сохранения (save-image), используем его
+      if (pendingSavePath) {
+        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] will-download: save-image detected, applying pendingSavePath:', pendingSavePath);
+        item.setSavePath(pendingSavePath);
+        dl.savePath = pendingSavePath;
+        pendingSavePath = null; // Сбрасываем после использования
+      }
+      
+      if (DOWNLOAD_DEBUG) {
+        console.log('[Download-DBG] will-download:', { filename, url, totalBytes, tabId });
+        console.log('[Download-DBG] mainWindow exists:', !!mainWindow, 'isDestroyed:', mainWindow?.isDestroyed());
+      }
+
+      const dl = {
+        id: downloadId,
+        filename,
+        url,
+        savePath: null,
+        receivedBytes: 0,
+        totalBytes: totalBytes || 0,
+        state: 'progressing',
+        startTime: Date.now(),
+      };
+      downloads.set(downloadId, dl);
+      saveDownloadsToFile();
+      console.log('[Download-DBG] Download added to Map. Total downloads:', downloads.size, 'Download:', dl);
+
+      console.log('[Download-DBG] About to send download-started. mainWindow:', !!mainWindow, 'isDestroyed:', mainWindow?.isDestroyed?.() || 'N/A');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] Sending download-started event');
+        // Используем setImmediate для гарантии что событие отправится после загрузки страницы
+        setImmediate(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download-started', { tabId, download: dl });
+            console.log('[Download-DBG] download-started sent via setImmediate');
+          }
+        });
+      } else {
+        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] CANNOT send - mainWindow is null or destroyed');
+      }
+
+      item.on('updated', (e, state) => {
+        dl.receivedBytes = item.getReceivedBytes();
+        dl.totalBytes = item.getTotalBytes();
+        dl.state = state === 'completed' ? 'completed' : 'progressing';
+        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] updated:', dl.receivedBytes, '/', dl.totalBytes, 'state:', state);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          setImmediate(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('download-updated', { tabId, download: dl });
+            }
+          });
+        }
+      });
+
+      item.on('done', (e, state) => {
+        dl.receivedBytes = item.getReceivedBytes();
+        dl.totalBytes = item.getTotalBytes();
+        dl.state = state === 'completed' ? 'completed' : (state === 'cancelled' ? 'cancelled' : 'interrupted');
+        dl.savePath = item.getSavePath();
+        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] done:', filename, state, 'savePath:', dl.savePath);
+        saveDownloadsToFile();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          setImmediate(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('download-updated', { tabId, download: dl });
+            }
+          });
+        }
+      });
+    } catch (err) {
+      console.error('[Download] error:', err);
+    }
+  });
+
   view.webContents.setWindowOpenHandler(({ url }) => {
     mainWindow.webContents.send('open-new-tab', { url });
     return { action: 'deny' };
@@ -1318,7 +1545,33 @@ ipcMain.on('ctx-select', (_e, { action, payload }) => {
     case 'cut':              view?.webContents.cut(); break;
     case 'paste':            view?.webContents.paste(); break;
     case 'search-text':      mainWindow?.webContents.send('open-new-tab', { url: `https://yandex.ru/search/?text=${encodeURIComponent(payload?.text || '')}` }); break;
-    case 'save-image':       view?.webContents.downloadURL(payload?.url || ''); break;
+    case 'save-image':
+      if (DOWNLOAD_DEBUG) console.log('[Download-DBG] save-image: activeTabId:', activeTabId, 'view exists:', !!view);
+      if (view) {
+        const imageUrl = payload?.url || '';
+        const defaultName = imageUrl.split('/').pop().split('?')[0] || 'image.png';
+        dialog.showSaveDialog(mainWindow, {
+          defaultPath: path.join(app.getPath('downloads'), defaultName),
+          filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }]
+        }).then(result => {
+          if (!result.canceled && result.filePath) {
+            // Проверяем что view всё ещё тот же самый и жив
+            const currentView = activeTabId ? browserViews.get(activeTabId) : null;
+            if (!currentView || currentView.webContents.isDestroyed()) {
+              if (DOWNLOAD_DEBUG) console.log('[Download-DBG] save-image: view destroyed or changed');
+              return;
+            }
+            pendingSavePath = result.filePath;
+            if (DOWNLOAD_DEBUG) console.log('[Download-DBG] save-image: pendingSavePath set to:', pendingSavePath, 'calling downloadURL');
+            currentView.webContents.downloadURL(imageUrl);
+          }
+        }).catch(err => {
+          if (DOWNLOAD_DEBUG) console.log('[Download-DBG] save-image: dialog error:', err);
+        });
+      } else {
+        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] save-image: NO VIEW for activeTabId:', activeTabId);
+      }
+      break;
     case 'devtools':         view?.webContents.openDevTools({ mode: 'detach' }); break;
     case 'new-tab':          mainWindow?.webContents.send('open-new-tab',     { url: null }); break;
     case 'new-private-tab':  mainWindow?.webContents.send('open-private-tab', { url: null }); break;
@@ -1390,9 +1643,39 @@ app.on('before-quit', async () => {
   await unloadAiModel();
 });
 
+// Downloads IPC
+ipcMain.handle('get-downloads', () => {
+  const result = { success: true, downloads: Array.from(downloads.values()) };
+  console.log('[MAIN-DBG] get-downloads called, returning:', result.downloads.length, 'downloads');
+  return result;
+});
+
+ipcMain.handle('clear-downloads', () => {
+  downloads.clear();
+  saveDownloadsToFile();
+  return { success: true };
+});
+
+ipcMain.handle('show-in-folder', (_event, { downloadId }) => {
+  const dl = downloads.get(downloadId);
+  if (dl?.savePath) {
+    shell.showItemInFolder(dl.savePath);
+    return { success: true };
+  }
+  return { success: false, error: 'Путь к файлу неизвестен' };
+});
+
+ipcMain.handle('remove-download', (_event, { downloadId }) => {
+  downloads.delete(downloadId);
+  saveDownloadsToFile();
+  return { success: true };
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
+  console.log('[MAIN] App ready, loading downloads...');
+  loadDownloadsFromFile();
   createMainWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

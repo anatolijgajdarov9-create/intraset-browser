@@ -56,7 +56,7 @@ function SBtn({ icon, label, active, onClick }) {
   );
 }
 
-// Panel — backdrop starts at left:60 so sidebar stays clickable, has dim overlay
+// Panel — панель слева (рядом с доком)
 function Panel({ title, onClose, children }) {
   return (
     <div style={{
@@ -64,13 +64,11 @@ function Panel({ title, onClose, children }) {
       zIndex: 500, display: 'flex', alignItems: 'stretch',
       pointerEvents: 'none'
     }}>
-      {/* Left backdrop — click to close, starts after sidebar (60px) */}
-      <div style={{ width: 60, flexShrink: 0, pointerEvents: 'none' }}/>
-      <div style={{ flex: 1, background: 'rgba(0,0,0,0.18)', pointerEvents: 'auto' }} onClick={onClose}/>
+      {/* Панель слева - левее дока */}
       <div style={{
-        width: 380, background: 'white', boxShadow: '-8px 0 40px rgba(0,0,0,0.12)',
+        width: 380, background: 'white', boxShadow: '8px 0 40px rgba(0,0,0,0.12)',
         display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.25s ease',
-        flexShrink: 0, pointerEvents: 'auto'
+        flexShrink: 0, pointerEvents: 'auto', marginLeft: 60
       }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -81,6 +79,8 @@ function Panel({ title, onClose, children }) {
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>{children}</div>
       </div>
+      {/* Overlay справа от панели - для закрытия */}
+      <div style={{ flex: 1, background: 'rgba(0,0,0,0.18)', pointerEvents: 'auto' }} onClick={onClose}/>
     </div>
   );
 }
@@ -296,6 +296,22 @@ export default function HomePage({
   const [aiLoadProgress, setAiLoadProgress] = useState(null); // null=idle, 0-100=loading
   const aiLoadTimerRef = useRef(null);
   const [aiStreamedTokens, setAiStreamedTokens] = useState(0);
+
+  // Downloads
+  const [downloads, setDownloads] = useState([]);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const pollDownloads = async () => {
+      try {
+        const res = await window.electronAPI.getDownloads();
+        if (res?.success) setDownloads(res.downloads || []);
+      } catch (e) { console.error('Downloads poll error:', e); }
+    };
+    pollDownloads();
+    const interval = setInterval(pollDownloads, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const notifBtnRef = useRef(null);
 
@@ -1199,11 +1215,63 @@ export default function HomePage({
 
       {panel === 'downloads' && (
         <Panel title="⬇ Загрузки" onClose={() => setPanel(null)}>
-          <div style={{ textAlign:'center',padding:'40px 0',color:'#94a3b8' }}>
-            <div style={{ marginBottom:10,display:'flex',justifyContent:'center' }}><svg width="36" height="36" fill="none" stroke="#93c5fd" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg></div>
-            <div style={{ fontSize:13,fontWeight:500,color:'#64748b' }}>Нет загрузок</div>
-            <div style={{ fontSize:12,marginTop:4 }}>Скачанные файлы появятся здесь</div>
-          </div>
+          {downloads.length === 0 ? (
+            <div style={{ textAlign:'center',padding:'40px 0',color:'#94a3b8' }}>
+              <div style={{ marginBottom:10,display:'flex',justifyContent:'center' }}><svg width="36" height="36" fill="none" stroke="#93c5fd" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg></div>
+              <div style={{ fontSize:13,fontWeight:500,color:'#64748b' }}>Нет загрузок</div>
+              <div style={{ fontSize:12,marginTop:4 }}>Скачанные файлы появятся здесь</div>
+            </div>
+          ) : (
+            <div style={{ display:'flex',flexDirection:'column' }}>
+              {downloads.map(dl => {
+                const pct = dl.totalBytes > 0 ? Math.round(dl.receivedBytes / dl.totalBytes * 100) : 0;
+                const isDone = dl.state === 'completed';
+                const isError = dl.state === 'interrupted' || dl.state === 'cancelled';
+                return (
+                  <div key={dl.id} style={{ padding:'10px 12px', borderBottom:'1px solid #f1f5f9' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                      <svg width="16" height="16" fill="none" stroke={isDone ? '#22c55e' : isError ? '#ef4444' : '#2563eb'} viewBox="0 0 24 24" strokeWidth="1.5">
+                        {isDone ? <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/> :
+                          isError ? <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/> :
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>}
+                      </svg>
+                      <span style={{ flex:1, fontSize:11, fontWeight:500, color:'#1e293b', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                        {dl.filename}
+                      </span>
+                      {isDone && <span style={{ fontSize:10, color:'#22c55e' }}>Готово</span>}
+                      {isError && <span style={{ fontSize:10, color:'#ef4444' }}>{dl.state === 'cancelled' ? 'Отменено' : 'Ошибка'}</span>}
+                    </div>
+                    {!isDone && !isError && (
+                      <div style={{ height:4, background:'#e2e8f0', borderRadius:2, overflow:'hidden' }}>
+                        <div style={{ height:'100%', width:`${pct}%`, background:'#2563eb', transition:'width 0.2s' }}/>
+                      </div>
+                    )}
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
+                      <span style={{ fontSize:10, color:'#94a3b8' }}>
+                        {dl.totalBytes > 0 ? `${(dl.receivedBytes/1024/1024).toFixed(1)} / ${(dl.totalBytes/1024/1024).toFixed(1)} МБ` : 'Загрузка...'}
+                      </span>
+                      <div style={{ display:'flex', gap:4 }}>
+                        {isDone && (
+                          <button onClick={() => window.electronAPI?.showInFolder(dl.id)} title="Открыть папку"
+                            style={{ padding:'2px 6px', fontSize:10, color:'#64748b', background:'#f1f5f9', border:'none', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                            <svg width="12" height="12" fill="none" stroke="#64748b" viewBox="0 0 24 24" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                            </svg>
+                          </button>
+                        )}
+                        <button onClick={() => { setDownloads(prev => prev.filter(d => d.id !== dl.id)); window.electronAPI?.removeDownload(dl.id); }} title="Удалить"
+                          style={{ padding:'2px 6px', fontSize:10, color:'#64748b', background:'#f1f5f9', border:'none', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          <svg width="12" height="12" fill="none" stroke="#64748b" viewBox="0 0 24 24" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Panel>
       )}
 

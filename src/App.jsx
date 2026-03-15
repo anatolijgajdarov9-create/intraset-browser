@@ -674,6 +674,47 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
   const [aiStreamedTokens, setAiStreamedTokens] = React.useState(0);
   const aiChatEndRef = React.useRef(null);
 
+  // Downloads - используем polling вместо событий
+  const [downloads, setDownloads] = React.useState([]);
+
+  React.useEffect(() => {
+    if (!isElectron) {
+      console.log('[Downloads-DBG] Not in Electron, skipping');
+      return;
+    }
+    console.log('[Downloads-DBG] Starting download polling...');
+
+    // Опрос загрузок каждую секунду
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await window.electronAPI.getDownloads();
+        console.log('[Downloads-DBG] Poll result:', res);
+        if (res?.success) {
+          console.log('[Downloads-DBG] Poll downloads count:', res.downloads?.length);
+          console.log('[Downloads-DBG] Poll downloads array:', res.downloads);
+          setDownloads(res.downloads || []);
+          console.log('[Downloads-DBG] setDownloads called with:', res.downloads?.length, 'items');
+        }
+      } catch (e) {
+        console.error('[Downloads-DBG] Poll error:', e);
+      }
+    }, 1000);
+
+    // Также слушаем события для мгновенного обновления
+    const offStarted = window.electronAPI.onDownloadStarted((data) => {
+      console.log('[Downloads-DBG] onDownloadStarted:', data);
+    });
+    const offUpdated = window.electronAPI.onDownloadUpdated((data) => {
+      console.log('[Downloads-DBG] onDownloadUpdated:', data);
+    });
+
+    return () => {
+      clearInterval(pollInterval);
+      offStarted();
+      offUpdated();
+    };
+  }, []);
+
   // Автоскролл к последнему сообщению
   React.useEffect(() => {
     aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1105,10 +1146,71 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
               )}
 
               {panel === 'downloads' && (
-                <div style={{ textAlign:'center', padding:'40px 0', color:'#94a3b8' }}>
-                  <svg width="36" height="36" fill="none" stroke="#93c5fd" viewBox="0 0 24 24" strokeWidth="1.5" style={{ marginBottom:10 }}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                  <div style={{ fontSize:13, fontWeight:500, color:'#64748b' }}>Нет загрузок</div>
-                  <div style={{ fontSize:12, marginTop:4 }}>Скачанные файлы появятся здесь</div>
+                <div style={{ display:'flex', flexDirection:'column', height:'100%', overflow:'auto' }}>
+                  {downloads.length === 0 ? (
+                    <div style={{ textAlign:'center', padding:'40px 0', color:'#94a3b8' }}>
+                      <svg width="36" height="36" fill="none" stroke="#93c5fd" viewBox="0 0 24 24" strokeWidth="1.5" style={{ marginBottom:10 }}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                      <div style={{ fontSize:13, fontWeight:500, color:'#64748b' }}>Нет загрузок</div>
+                      <div style={{ fontSize:12, marginTop:4 }}>Скачанные файлы появятся здесь</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 12px', borderBottom:'1px solid #f1f5f9' }}>
+                        <span style={{ fontSize:11, fontWeight:600, color:'#64748b' }}>Загрузки ({downloads.length})</span>
+                        {downloads.length > 0 && (
+                          <button onClick={() => { setDownloads([]); window.electronAPI?.clearDownloads(); }}
+                            style={{ fontSize:10, color:'#94a3b8', background:'none', border:'none', cursor:'pointer' }}>Очистить</button>
+                        )}
+                      </div>
+                      {downloads.map(dl => {
+                        const pct = dl.totalBytes > 0 ? Math.round(dl.receivedBytes / dl.totalBytes * 100) : 0;
+                        const isDone = dl.state === 'completed';
+                        const isError = dl.state === 'interrupted' || dl.state === 'cancelled';
+                        return (
+                          <div key={dl.id} style={{ padding:'10px 12px', borderBottom:'1px solid #f1f5f9' }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                              <svg width="16" height="16" fill="none" stroke={isDone ? '#22c55e' : isError ? '#ef4444' : '#2563eb'} viewBox="0 0 24 24" strokeWidth="1.5">
+                                {isDone ? <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/> :
+                                  isError ? <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/> :
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>}
+                              </svg>
+                              <span style={{ flex:1, fontSize:11, fontWeight:500, color:'#1e293b', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                {dl.filename}
+                              </span>
+                              {isDone && <span style={{ fontSize:10, color:'#22c55e' }}>Готово</span>}
+                              {isError && <span style={{ fontSize:10, color:'#ef4444' }}>{dl.state === 'cancelled' ? 'Отменено' : 'Ошибка'}</span>}
+                            </div>
+                            {!isDone && !isError && (
+                              <div style={{ height:4, background:'#e2e8f0', borderRadius:2, overflow:'hidden' }}>
+                                <div style={{ height:'100%', width:`${pct}%`, background:'#2563eb', transition:'width 0.2s' }}/>
+                              </div>
+                            )}
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:4 }}>
+                              <span style={{ fontSize:10, color:'#94a3b8' }}>
+                                {dl.totalBytes > 0 ? `${(dl.receivedBytes/1024/1024).toFixed(1)} / ${(dl.totalBytes/1024/1024).toFixed(1)} МБ` : 'Загрузка...'}
+                              </span>
+                              <div style={{ display:'flex', gap:4 }}>
+                                {isDone && (
+                                  <button onClick={() => window.electronAPI?.showInFolder(dl.id)} title="Открыть папку"
+                                    style={{ padding:'2px 6px', fontSize:10, color:'#64748b', background:'#f1f5f9', border:'none', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                                    <svg width="12" height="12" fill="none" stroke="#64748b" viewBox="0 0 24 24" strokeWidth="2">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                    </svg>
+                                  </button>
+                                )}
+                                <button onClick={() => { setDownloads(prev => prev.filter(d => d.id !== dl.id)); window.electronAPI?.removeDownload(dl.id); }} title="Удалить"
+                                  style={{ padding:'2px 6px', fontSize:10, color:'#64748b', background:'#f1f5f9', border:'none', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                                  <svg width="12" height="12" fill="none" stroke="#64748b" viewBox="0 0 24 24" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                                  </svg>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
                 </div>
               )}
 

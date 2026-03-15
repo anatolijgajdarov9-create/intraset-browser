@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+console.log('[Preload] preload.js loaded');
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Tab management
   createTab: (tabId, url) => ipcRenderer.invoke('create-tab', { tabId, url }),
@@ -69,6 +71,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Context menu actions from BrowserView
   onOpenPrivateTab: (cb) => { const fn = (_e, data) => cb(data); ipcRenderer.on('open-private-tab', fn); return () => ipcRenderer.removeListener('open-private-tab', fn); },
 
+  // Downloads
+  getDownloads: () => ipcRenderer.invoke('get-downloads'),
+  clearDownloads: () => ipcRenderer.invoke('clear-downloads'),
+  onDownloadStarted: (cb) => { 
+    console.log('[Preload-DBG] onDownloadStarted called - setting up listener');
+    const fn = (_e, data) => { 
+      console.log('[Preload-DBG] download-started RECEIVED:', JSON.stringify(data, null, 2)); 
+      console.log('[Preload-DBG] Full event object keys:', Object.keys(_e));
+      console.log('[Preload-DBG] ipcRenderer event listeners count:', ipcRenderer.listenerCount('download-started'));
+      cb(data); 
+    }; 
+    console.log('[Preload-DBG] Setting up download-started listener');
+    ipcRenderer.on('download-started', fn); 
+    return () => { 
+      console.log('[Preload-DBG] Removing download-started listener');
+      ipcRenderer.removeListener('download-started', fn); 
+    }; 
+  },
+  onDownloadUpdated: (cb) => { 
+    console.log('[Preload-DBG] onDownloadUpdated called - setting up listener');
+    const fn = (_e, data) => { 
+      console.log('[Preload-DBG] download-updated RECEIVED:', JSON.stringify(data, null, 2)); 
+      cb(data); 
+    }; 
+    console.log('[Preload-DBG] Setting up download-updated listener');
+    ipcRenderer.on('download-updated', fn); 
+    return () => { 
+      console.log('[Preload-DBG] Removing download-updated listener');
+      ipcRenderer.removeListener('download-updated', fn); 
+    }; 
+  },
+
   openDevTools: () => ipcRenderer.invoke('open-devtools'),
   openBrowserMenu: (pos) => ipcRenderer.invoke('open-browser-menu', pos),
+  showInFolder: (downloadId) => ipcRenderer.invoke('show-in-folder', { downloadId }),
+  removeDownload: (downloadId) => ipcRenderer.invoke('remove-download', { downloadId }),
 });

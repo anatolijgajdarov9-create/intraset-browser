@@ -4,9 +4,20 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Intra Browser</title>
+  <style>
+    #root { display: none; }
+    #root.visible { display: block; }
+    #loader { 
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    #root.visible + #loader { display: none; }
+  </style>
 </head>
 <body>
   <div id="root"></div>
+  <div id="loader"><span>Загрузка...</span></div>
   <script type="module" src="/src/main.jsx"></script>
+  <script>document.getElementById('root').classList.add('visible');</script>
 </body>
 </html>
