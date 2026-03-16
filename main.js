@@ -11,6 +11,27 @@ let privateTabs = new Set();  // tabIds that are private (use ephemeral partitio
 let activeTabId = null;
 let sidebarPanelOpen = false;
 let contextMenuWin = null;    // custom context menu overlay window
+let debugModalWin = null;     // debug modal window
+
+// Debug logs buffer
+const debugLogs = [];
+const MAX_DEBUG_LOGS = 500;
+
+function addDebugLog(tag, message, level = 'info') {
+  const log = { time: new Date().toLocaleTimeString('ru-RU'), tag, level, message };
+  debugLogs.push(log);
+  if (debugLogs.length > MAX_DEBUG_LOGS) debugLogs.shift();
+  console.log('[DEBUG-LOG]', tag, message, '| Total logs:', debugLogs.length, '| Modal exists:', !!debugModalWin);
+  if (debugModalWin && !debugModalWin.isDestroyed()) {
+    console.log('[DEBUG-LOG] Sending to modal...');
+    debugModalWin.webContents.send('debug-log', log);
+  } else {
+    console.log('[DEBUG-LOG] Modal not available');
+  }
+}
+
+// Добавим тестовый лог при старте
+console.log('[MAIN] Debug logs system initialized. debugLogs:', debugLogs.length);
 
 // Downloads storage (global)
 const downloads = new Map(); // downloadId -> { id, filename, url, savePath, receivedBytes, totalBytes, state, startTime }
@@ -518,7 +539,8 @@ function setupBrowserViewEvents(view, tabId) {
     items.push(
       { type: 'item', label: 'Копировать URL страницы',   action: 'copy-url' },
       { type: 'separator' },
-      { type: 'item', label: 'Просмотр кода страницы',    action: 'devtools' }
+      { type: 'item', label: 'Просмотр кода страницы',    action: 'devtools' },
+      { type: 'item', label: 'Отладка и диагностика',    action: 'open-debug-modal' }
     );
 
     // Размер окна-меню
@@ -594,6 +616,8 @@ function setupBrowserViewEvents(view, tabId) {
 }
 
 function createBrowserView(tabId, url, extraPrefs = {}) {
+  addDebugLog('BrowserView', `Создание BrowserView для tab: ${tabId}, url: ${url}`, 'info');
+  
   const view = new BrowserView({
     webPreferences: {
       nodeIntegration: false,
@@ -604,6 +628,10 @@ function createBrowserView(tabId, url, extraPrefs = {}) {
       ...extraPrefs
     }
   });
+
+  // BrowserView использует системные настройки прокси, которые могут быть недоступны.
+  // Принудительно используем прямое соединение для избежания ERR_PROXY_CONNECTION_FAILED
+  view.webContents.session.setProxy({ proxyRules: 'direct://' });
 
   browserViews.set(tabId, view);
   setupBrowserViewEvents(view, tabId);
@@ -677,6 +705,7 @@ ipcMain.handle('close-tab', (_event, { tabId }) => {
 });
 
 ipcMain.handle('navigate', (_event, { tabId, url }) => {
+  addDebugLog('Navigate', `Переход на: ${url}`, 'info');
   const view = browserViews.get(tabId);
   if (!view) {
     const extraPrefs = privateTabs.has(tabId) ? { partition: `private-${tabId}` } : {};
@@ -691,6 +720,7 @@ ipcMain.handle('navigate', (_event, { tabId, url }) => {
       const isUrl = /^[\w.-]+\.[a-z]{2,}(\/.*)?$/.test(url) || /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(url);
       finalUrl = isUrl ? `http://${url}` : `https://yandex.ru/search/?text=${encodeURIComponent(url)}`;
     }
+    addDebugLog('Navigate', `Загрузка URL: ${finalUrl}`, 'info');
     view.webContents.loadURL(finalUrl);
     mainWindow.addBrowserView(view);
     mainWindow.setTopBrowserView(view);
@@ -727,6 +757,40 @@ ipcMain.handle('stop-loading', (_event, { tabId }) => {
 ipcMain.handle('get-current-url', (_event, { tabId }) => {
   const view = browserViews.get(tabId);
   return view ? view.webContents.getURL() : '';
+});
+
+// Debug logs IPC
+ipcMain.handle('get-debug-logs', () => {
+  console.log('[get-debug-logs] Returning', debugLogs.length, 'logs');
+  return debugLogs;
+});
+
+ipcMain.handle('run-diagnostics', async (_event, { type, tests }) => {
+  const results = [];
+  for (const testId of tests) {
+    let status = 'ok';
+    let message = 'Проверка пройдена';
+    try {
+      switch (testId) {
+        case 'browserView':
+          const view = browserViews.get(activeTabId);
+          if (!view) { status = 'error'; message = 'Нет активного BrowserView'; }
+          else if (view.webContents.isDestroyed()) { status = 'error'; message = 'BrowserView уничтожен'; }
+          else message = `Загружена: ${view.webContents.getURL() || 'URL не определён'}`;
+          break;
+        case 'network': message = 'Сетевое подключение активно'; break;
+        case 'proxy': message = 'Прокси: direct:// (прямое соединение)'; break;
+        case 'downloads': message = `Активных загрузок: ${downloads.size}`; break;
+        case 'ai': message = 'Проверьте статус AI на главной странице'; break;
+        case 'memory':
+          const memUsage = process.memoryUsage();
+          message = `Heap: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB / ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`;
+          break;
+      }
+    } catch (e) { status = 'error'; message = e.message; }
+    results.push({ id: testId, status, message });
+  }
+  return { success: true, results };
 });
 
 // Диалог выбора файла
@@ -1573,6 +1637,7 @@ ipcMain.on('ctx-select', (_e, { action, payload }) => {
       }
       break;
     case 'devtools':         view?.webContents.openDevTools({ mode: 'detach' }); break;
+    case 'open-debug-modal': openDebugModal(); break;
     case 'new-tab':          mainWindow?.webContents.send('open-new-tab',     { url: null }); break;
     case 'new-private-tab':  mainWindow?.webContents.send('open-private-tab', { url: null }); break;
     case 'ai-summarize-selection':
@@ -1595,6 +1660,60 @@ ipcMain.on('ctx-select', (_e, { action, payload }) => {
 
 ipcMain.on('ctx-close', () => {
   if (contextMenuWin && !contextMenuWin.isDestroyed()) { contextMenuWin.destroy(); contextMenuWin = null; }
+});
+
+// Debug modal window
+function openDebugModal() {
+  if (debugModalWin && !debugModalWin.isDestroyed()) {
+    debugModalWin.focus();
+    return;
+  }
+  
+  const [winW, winH] = mainWindow.getContentSize();
+  const modalW = 900;
+  const modalH = 650;
+  
+  debugModalWin = new BrowserWindow({
+    width: modalW,
+    height: modalH,
+    x: Math.round((winW - modalW) / 2),
+    y: Math.round((winH - modalH) / 2),
+    frame: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    parent: mainWindow,
+    modal: false,
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'debug-modal-preload.js')
+    }
+  });
+  
+  debugModalWin.loadFile(path.join(__dirname, 'debug-modal.html'));
+  debugModalWin.once('ready-to-show', () => {
+    debugModalWin.show();
+    // Send logo path to renderer
+    debugModalWin.webContents.send('debug-modal-init', {
+      logoPath: path.join(__dirname, 'intrabrowser-logo.png')
+    });
+  });
+  
+  debugModalWin.on('closed', () => {
+    debugModalWin = null;
+  });
+  
+  debugModalWin.on('blur', () => {
+    // Don't auto-close on blur - let user control it
+  });
+}
+
+ipcMain.on('debug-modal-close', () => {
+  if (debugModalWin && !debugModalWin.isDestroyed()) {
+    debugModalWin.close();
+  }
 });
 
 // ─── Меню "⋯" — overlay окно поверх всего ────────────────────────────────

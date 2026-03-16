@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; background: #f8fafc; overflow: hidden; width: 100%; height: 100%; }
+  .header { background: white; padding: 16px 20px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
+  .header-title { font-size: 16px; font-weight: 700; color: #1e293b; display: flex; align-items: center; gap: 10px; }
+  .header-title img { width: 24px; height: 24px; }
+  .header-actions { display: flex; align-items: center; gap: 12px; }
+  .mode-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 6px; background: #f1f5f9; cursor: pointer; font-size: 13; color: #64748b; }
+  .mode-toggle.developer { background: #fef3c7; color: #92400e; }
+  .close-btn { border: none; background: none; cursor: pointer; color: #94a3b8; padding: 4px; }
+  .tabs { display: flex; background: white; border-bottom: 1px solid #e2e8f0; }
+  .tab { padding: 12px 20px; display: flex; align-items: center; gap: 8px; border: none; background: transparent; color: #64748b; font-size: 13; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+  .content { padding: 16px; height: calc(100% - 100px); overflow: auto; }
+  
+  /* Logs panel */
+  .logs-filter { display: flex; gap: 8px; margin-bottom: 12px; }
+  .logs-filter input { flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 13; outline: none; }
+  .logs-filter label { display: flex; align-items: center; gap: 6px; font-size: 12; color: #64748b; cursor: pointer; }
+  .logs-container { background: #1e293b; border-radius: 8px; padding: 12px; height: calc(100% - 60px); overflow: auto; font-family: monospace; font-size: 12; }
+  .log-entry { padding: 4px 0; color: #94a3b8; border-bottom: 1px solid #334155; }
+  .log-entry.error { color: #f87171; }
+  .log-entry.warn { color: #fbbf24; }
+  .log-time { color: #64748b; margin-right: 8px; }
+  .log-tag { color: #60a5fa; margin-right: 8px; }
+  .logs-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #e2e8f0; background: white; font-size: 13; cursor: pointer; color: #475569; }
+  .btn:hover { background: #f8fafc; }
+  
+  /* Diagnostics panel */
+  .diag-actions { display: flex; gap: 8px; margin-bottom: 16px; }
+  .btn-primary { background: #2563eb; color: white; border-color: #2563eb; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .diag-tests { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .test-check { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 6px; border: 1px solid #e2e8f0; cursor: pointer; font-size: 13; background: white; }
+  .test-check.selected { background: #eff6ff; border-color: #2563eb; }
+  .diag-results { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+  .result-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+  .result-status { font-size: 16px; }
+  .result-status.ok { color: #22c55e; }
+  .result-status.error { color: #ef4444; }
+  
+  /* Troubleshooting panel */
+  .trouble-item { border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .trouble-header { width: 100%; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; background: white; border: none; cursor: pointer; font-size: 14; font-weight: 500; color: #1e293b; }
+  .trouble-header:hover { background: #f8fafc; }
+  .trouble-content { padding: 12px 16px; border-top: 1px solid #e2e8f0; background: #f8fafc; font-size: 13; color: #475569; }
+  .trouble-dev { font-size: 12; color: #64748b; padding: 8px; background: #f1f5f9; border-radius: 6px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-title">
+    <img id="headerLogo" src="" alt="Logo" style="display:none" />
+    Отладка и диагностика
+  </div>
+  <div class="header-actions">
+    <div class="mode-toggle" id="modeToggle" onclick="toggleMode()">
+      <span id="modeLabel">Пользователь</span>
+    </div>
+    <button class="close-btn" onclick="closeModal()">
+      <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('logs')" id="tab-logs">Логи</button>
+  <button class="tab" onclick="showTab('diagnostics')" id="tab-diagnostics">Диагностика</button>
+  <button class="tab" onclick="showTab('troubleshooting')" id="tab-troubleshooting">Устранение неполадок</button>
+</div>
+
+<div class="content" id="content-logs">
+  <div class="logs-filter">
+    <input type="text" id="logFilter" placeholder="Фильтр..." oninput="filterLogs()">
+    <label><input type="checkbox" id="autoScroll" checked> Авто-прокрутка</label>
+  </div>
+  <div class="logs-container" id="logsContainer"></div>
+  <div class="logs-actions">
+    <button class="btn" onclick="clearLogs()">Очистить</button>
+    <button class="btn" onclick="copyLogs()">Копировать</button>
+    <button class="btn" onclick="exportLogs()">Экспорт</button>
+  </div>
+</div>
+
+<div class="content" id="content-diagnostics" style="display:none">
+  <div class="diag-actions">
+    <button class="btn btn-primary" onclick="runDiagnostics('quick')">Быстрая диагностика</button>
+    <button class="btn btn-primary" onclick="runDiagnostics('full')">Полная диагностика</button>
+  </div>
+  <div class="diag-tests">
+    <label class="test-check selected"><input type="checkbox" checked data-test="browserView"> BrowserView</label>
+    <label class="test-check selected"><input type="checkbox" checked data-test="network"> Сеть</label>
+    <label class="test-check selected"><input type="checkbox" checked data-test="proxy"> Прокси</label>
+    <label class="test-check selected"><input type="checkbox" checked data-test="downloads"> Загрузки</label>
+    <label class="test-check selected"><input type="checkbox" checked data-test="ai"> AI-сервер</label>
+    <label class="test-check selected"><input type="checkbox" checked data-test="memory"> Память</label>
+  </div>
+  <div class="diag-results" id="diagResults"></div>
+</div>
+
+<div class="content" id="content-troubleshooting" style="display:none">
+  <div class="trouble-item">
+    <button class="trouble-header" onclick="toggleTrouble(this)">
+      Веб-страницы не загружаются <span>▼</span>
+    </button>
+    <div class="trouble-content" style="display:none">
+      Проверьте подключение к интернету и попробуйте перезагрузить страницу. Если проблема сохраняется, запустите диагностику.
+      <div class="trouble-dev"><strong>Для разработчика:</strong> Проверьте настройки прокси в системе, очистите кэш браузера, проверьте работу BrowserView.</div>
+    </div>
+  </div>
+  <div class="trouble-item">
+    <button class="trouble-header" onclick="toggleTrouble(this)">
+      Не работает AI-ассистент <span>▼</span>
+    </button>
+    <div class="trouble-content" style="display:none">
+      Убедитесь, что модель загружена. Перейдите на главную страницу и выберите модель заново.
+      <div class="trouble-dev"><strong>Для разработчика:</strong> Проверьте запущен ли llama-server, достаточно ли памяти GPU.</div>
+    </div>
+  </div>
+  <div class="trouble-item">
+    <button class="trouble-header" onclick="toggleTrouble(this)">
+      Не скачиваются файлы <span>▼</span>
+    </button>
+    <div class="trouble-content" style="display:none">
+      Проверьте, что папка загрузок доступна и имеет достаточно места.
+      <div class="trouble-dev"><strong>Для разработчика:</strong> Проверьте права на запись в папку загрузок.</div>
+    </div>
+  </div>
+  <div class="trouble-item">
+    <button class="trouble-header" onclick="toggleTrouble(this)">
+      Ошибки прокси <span>▼</span>
+    </button>
+    <div class="trouble-content" style="display:none">
+      Проверьте настройки прокси в системе. Возможно, системный прокси недоступен.
+      <div class="trouble-dev"><strong>Для разработчика:</strong> Запустите диагностику сети.</div>
+    </div>
+  </div>
+  <div class="trouble-item">
+    <button class="trouble-header" onclick="toggleTrouble(this)">
+      Браузер работает медленно <span>▼</span>
+    </button>
+    <div class="trouble-content" style="display:none">
+      Закройте лишние вкладки. Перезагрузите браузер.
+      <div class="trouble-dev"><strong>Для разработчика:</strong> Проверьте использование памяти через диагностику.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let isDeveloper = false;
+let logs = [];
+
+function toggleMode() {
+  isDeveloper = !isDeveloper;
+  document.getElementById('modeLabel').textContent = isDeveloper ? 'Разработчик' : 'Пользователь';
+  document.getElementById('modeToggle').className = 'mode-toggle' + (isDeveloper ? ' developer' : '');
+}
+
+function closeModal() {
+  window.debugModal.close();
+}
+
+function showTab(tabId) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.content').forEach(c => c.style.display = 'none');
+  document.getElementById('tab-' + tabId).classList.add('active');
+  document.getElementById('content-' + tabId).style.display = 'block';
+}
+
+function toggleTrouble(btn) {
+  const content = btn.nextElementSibling;
+  content.style.display = content.style.display === 'none' ? 'block' : 'none';
+}
+
+// Logs
+function addLog(tag, message, level) {
+  const time = new Date().toLocaleTimeString('ru-RU');
+  logs.push({ time, tag, message, level });
+  if (logs.length > 500) logs.shift();
+  renderLogs();
+}
+
+function renderLogs() {
+  const filter = document.getElementById('logFilter').value.toLowerCase();
+  const container = document.getElementById('logsContainer');
+  const showAll = isDeveloper;
+  
+  container.innerHTML = logs
+    .filter(l => !filter || l.message.toLowerCase().includes(filter) || l.tag.toLowerCase().includes(filter))
+    .filter(l => showAll || l.level === 'error' || l.level === 'warn')
+    .map(l => `<div class="log-entry ${l.level}"><span class="log-time">${l.time}</span><span class="log-tag">[${l.tag}]</span>${l.message}</div>`)
+    .join('');
+    
+  if (document.getElementById('autoScroll').checked) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function filterLogs() { renderLogs(); }
+
+function clearLogs() { logs = []; renderLogs(); }
+
+function copyLogs() {
+  const text = logs.map(l => `[${l.time}] [${l.tag}] ${l.message}`).join('\n');
+  navigator.clipboard.writeText(text);
+}
+
+function exportLogs() {
+  const text = logs.map(l => `[${l.time}] [${l.tag}] ${l.message}`).join('\n');
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `debug-logs-${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+}
+
+// Listen for logs from main process
+window.debugLog = function(log) {
+  addLog(log.tag || 'APP', log.message, log.level || 'info');
+};
+
+// Diagnostics
+async function runDiagnostics(type) {
+  const tests = [];
+  document.querySelectorAll('.test-check input:checked').forEach(cb => tests.push(cb.dataset.test));
+  
+  const results = document.getElementById('diagResults');
+  results.innerHTML = '<div style="text-align:center;padding:20px;">Запуск диагностики...</div>';
+  
+  try {
+    const data = await window.debugAPI.runDiagnostics({ type, tests });
+    results.innerHTML = data.results.map(r => `
+      <div class="result-item">
+        <span class="result-status ${r.status}">${r.status === 'ok' ? '✓' : r.status === 'error' ? '✗' : '?'}</span>
+        <span>${r.message}</span>
+      </div>
+    `).join('');
+  } catch (e) {
+    results.innerHTML = '<div style="color:red">Ошибка: ' + e.message + '</div>';
+  }
+}
+
+// Toggle test selection
+document.querySelectorAll('.test-check').forEach(el => {
+  el.addEventListener('click', () => el.classList.toggle('selected'));
+});
+
+// Load initial logs
+console.log('Loading initial logs...');
+window.debugAPI.getDebugLogs().then(initialLogs => {
+  console.log('Got initial logs:', initialLogs);
+  initialLogs.forEach(log => addLog(log.tag, log.message, log.level));
+}).catch(err => console.error('Error loading logs:', err));
+
+// Subscribe to new logs
+console.log('Subscribing to debug logs...');
+window.debugAPI.onDebugLog((log) => {
+  console.log('Received log:', log);
+  addLog(log.tag, log.message, log.level);
+});
+
+// Handle initialization data (logo path)
+window.debugAPI.onInit((data) => {
+  console.log('Received init data:', data);
+  if (data.logoPath) {
+    const logo = document.getElementById('headerLogo');
+    logo.src = 'file://' + data.logoPath;
+    logo.style.display = 'block';
+  }
+});
+</script>
+</body>
+</html>
