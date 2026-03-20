@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiChat:         (message)   => ipcRenderer.invoke('ai-chat', { message }),
   aiAbort:        ()          => ipcRenderer.send('ai-abort'),
   aiClearHistory: ()          => ipcRenderer.invoke('ai-clear-history'),
+  aiGetHistory:  ()          => ipcRenderer.invoke('ai-get-history'),
   aiAnalyzeSelection: (text, prompt) => ipcRenderer.invoke('ai-analyze-selection', { text, prompt }),
   aiWebSearch:    (query)     => ipcRenderer.invoke('ai-web-search', { query }),
   aiThinkResponse: (prompt)   => ipcRenderer.invoke('ai-think-response', { prompt }),

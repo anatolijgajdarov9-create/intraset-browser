@@ -96,6 +96,7 @@ let aiHistory        = [];   // { role, content }[]
 let llamaContextSize = 4096;
 let aiTemperature   = 0.7;
 let aiTopP          = 0.9;
+let aiGenerating    = false;
 
 function getFreePort() {
   return new Promise((resolve) => {
@@ -113,6 +114,7 @@ async function unloadAiModel() {
   llamaServerPort = null;
   aiCurrentModelName = null;
   aiHistory = [];
+  aiGenerating = false;
 }
 
 // ─── Helper: run one model for a single non-streaming inference ──────────────
@@ -831,6 +833,7 @@ ipcMain.handle('ai-get-status', () => ({
   loaded: llamaServerProc !== null,
   modelName: aiCurrentModelName || null,
   contextSize: llamaContextSize,
+  generating: aiGenerating,
 }));
 
 ipcMain.handle('ai-set-params', (_event, { temperature, topP }) => {
@@ -990,6 +993,7 @@ ipcMain.handle('ai-chat', async (_event, { message }) => {
     const finish = (success, errMsg) => {
       if (settled) return;
       settled = true;
+      aiGenerating = false;
       if (assistantText) aiHistory.push({ role: 'assistant', content: assistantText });
       if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send(success ? 'ai-done' : 'ai-error', success ? undefined : errMsg);
@@ -1036,6 +1040,7 @@ ipcMain.handle('ai-chat', async (_event, { message }) => {
     req.on('error', (e) => {
       if (settled) return;
       settled = true;
+      aiGenerating = false;
       const aborted = ctrl.signal.aborted; // use captured ctrl, not stale global
       if (assistantText) aiHistory.push({ role: 'assistant', content: assistantText });
       if (mainWindow && !mainWindow.isDestroyed())
@@ -1073,6 +1078,7 @@ ipcMain.handle('ai-analyze-page', async (_event, { prompt }) => {
     const finish = (success, errMsg) => {
       if (settled) return;
       settled = true;
+      aiGenerating = false;
       if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send(success ? 'ai-done' : 'ai-error', success ? undefined : errMsg);
       resolve({ success });
@@ -1098,6 +1104,7 @@ ipcMain.handle('ai-analyze-page', async (_event, { prompt }) => {
     req.on('error', (e) => {
       if (settled) return;
       settled = true;
+      aiGenerating = false;
       const aborted = ctrl.signal.aborted; // use captured ctrl, not stale global
       if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send(aborted ? 'ai-done' : 'ai-error', aborted ? undefined : e.message);
@@ -1116,6 +1123,10 @@ ipcMain.on('ai-abort', () => {
 ipcMain.handle('ai-clear-history', () => {
   aiHistory = [];
   return { success: true };
+});
+
+ipcMain.handle('ai-get-history', () => {
+  return { success: true, history: aiHistory };
 });
 
 ipcMain.handle('ai-unload-model', async () => {
@@ -1201,6 +1212,7 @@ ipcMain.handle('ai-analyze-selection', async (_event, { text, prompt }) => {
     let settled = false;
     const finish = (success, errMsg) => {
       if (settled) return; settled = true;
+      aiGenerating = false;
       if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send(success ? 'ai-done' : 'ai-error', success ? undefined : errMsg);
       resolve({ success });
@@ -1225,6 +1237,7 @@ ipcMain.handle('ai-analyze-selection', async (_event, { text, prompt }) => {
     });
     req.on('error', (e) => {
       if (settled) return; settled = true;
+      aiGenerating = false;
       const aborted = ctrl.signal.aborted;
       if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send(aborted ? 'ai-done' : 'ai-error', aborted ? undefined : e.message);

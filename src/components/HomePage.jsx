@@ -274,6 +274,7 @@ export default function HomePage({
     compact: localStorage.getItem('intra-ui-compact') !== 'false',
   }));
   useEffect(() => { applyUiPrefs(uiSettings); }, []); // eslint-disable-line
+
   const toggleUiSetting = (key) => {
     setUiSettings(prev => {
       const next = { ...prev, [key]: !prev[key] };

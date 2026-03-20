@@ -254,6 +254,14 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   const [deepThinkMode, setDeepThinkMode] = useState(false);
   const cancelledRef = useRef(false);
 
+  // ── Chat history ────────────────────────────────────────────────────────────
+  const [aiChatHistory, setAiChatHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('intra-ai-chat-history-aichat') || '[]'); } catch { return []; }
+  });
+  const [aiShowHistory, setAiShowHistory] = useState(false);
+
+  // ── History sync state (not used yet) ──────────────────────────────────────
+
   // ── Pipeline animation state ──────────────────────────────────────────────
   const [pipelineVisible, setPipelineVisible] = useState(true);
   const [pipelineStages, setPipelineStages] = useState([]); // [{id,label,type,status,detail?}]
@@ -277,6 +285,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
     window.electronAPI.aiSetParams(temperature, topP).catch(() => {});
   }, [temperature, topP]);
 
+  // Load chat history from main process on mount
   // Finalize pipeline when generation ends
   useEffect(() => {
     if (!aiLoading && pipelineStages.length > 0) {
@@ -1064,23 +1073,52 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                 Процесс
               </button>
             )}
-            {aiChat.length > 0 && (
+            <button
+              title={aiShowHistory ? 'Показать чат' : 'История чатов'}
+              onClick={() => setAiShowHistory(v => !v)}
+              style={{
+                padding: '5px 11px', borderRadius: 7, border: `1px solid ${aiShowHistory ? '#bfdbfe' : '#e2e8f0'}`,
+                background: aiShowHistory ? '#eff6ff' : '#f8fafc', color: aiShowHistory ? '#2563eb' : '#64748b',
+                fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5
+              }}
+            >
+              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              {aiShowHistory ? 'Чат' : `История${aiChatHistory.length > 0 ? ` (${aiChatHistory.length})` : ''}`}
+            </button>
+            {aiChat.length > 0 && !aiShowHistory && (
               <button
-                title="Очистить чат"
-                onClick={() => { setAiChat([]); setPipelineStages([]); window.electronAPI?.aiClearHistory?.(); }}
+                title="Новый чат (сохранить текущий)"
+                onClick={() => {
+                  const userMessages = aiChat.filter(m => m.role === 'user');
+                  if (userMessages.length > 0) {
+                    const conversation = {
+                      id: Date.now(),
+                      timestamp: new Date().toISOString(),
+                      messages: aiChat.filter(m => !m.isServerLog && !m.role === 'status'),
+                      source: 'aichat'
+                    };
+                    setAiChatHistory(hist => {
+                      const newHist = [conversation, ...hist].slice(0, 50);
+                      localStorage.setItem('intra-ai-chat-history-aichat', JSON.stringify(newHist));
+                      return newHist;
+                    });
+                  }
+                  setAiChat([]); setPipelineStages([]); window.electronAPI?.aiClearHistory?.();
+                }}
                 style={{
                   padding: '5px 11px', borderRadius: 7, border: '1px solid #e2e8f0',
                   background: '#f8fafc', color: '#64748b', fontSize: 11, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', gap: 5
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.borderColor = '#fecaca'; }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#fef3c7'; e.currentTarget.style.color = '#d97706'; e.currentTarget.style.borderColor = '#fcd34d'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#64748b'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
               >
                 <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
                 </svg>
-                Очистить
+                Новый
               </button>
             )}
           </div>
@@ -1098,8 +1136,36 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           flex: 1, overflowY: 'auto', padding: '24px 28px',
           display: 'flex', flexDirection: 'column', gap: 18
         }}>
+          {/* History view */}
+          {aiShowHistory && (
+            aiChatHistory.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
+                <div style={{ fontSize: 14, marginBottom: 8 }}>История чатов пуста</div>
+                <div style={{ fontSize: 12 }}>Начните диалог, чтобы он сохранился здесь</div>
+              </div>
+            ) : (
+              aiChatHistory.map((conv) => (
+                <div key={conv.id}
+                  onClick={() => { setAiChat(conv.messages); setAiShowHistory(false); }}
+                  style={{ padding: '14px 16px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0', cursor: 'pointer' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.borderColor = '#bfdbfe'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                >
+                  <div style={{ color: '#64748b', marginBottom: 8, fontSize: 11 }}>
+                    {new Date(conv.timestamp).toLocaleString('ru-RU')}
+                  </div>
+                  <div style={{ color: '#374151', fontSize: 13, lineHeight: 1.5 }}>
+                    {conv.messages[0]?.text?.slice(0, 150)}{conv.messages[0]?.text?.length > 150 ? '...' : ''}
+                  </div>
+                  <div style={{ color: '#94a3b8', marginTop: 8, fontSize: 11 }}>
+                    {conv.messages.length} сообщений
+                  </div>
+                </div>
+              ))
+            )
+          )}
           {/* Empty state */}
-          {aiChat.length === 0 && (
+          {!aiShowHistory && aiChat.length === 0 && (
             <div style={{
               flex: 1, display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center', padding: '60px 0', color: '#94a3b8'
@@ -1138,7 +1204,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           )}
 
           {/* Message bubbles */}
-          {aiChat.map((msg, i) => {
+          {!aiShowHistory && aiChat.map((msg, i) => {
             // ── Временный статус-индикатор ──────────────────────────────
             if (msg.role === 'status') {
               return (
@@ -1166,150 +1232,76 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                   <div style={{
                     width: 32, height: 32, borderRadius: 9, flexShrink: 0,
                     background: 'linear-gradient(135deg,#7c3aed,#5b21b6)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
                   }}>
-                    <svg width="15" height="15" fill="none" stroke="white" viewBox="0 0 24 24" strokeWidth="1.8">
+                    <svg width="16" height="16" fill="none" stroke="#e9d5ff" viewBox="0 0 24 24" strokeWidth="1.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
                     </svg>
                   </div>
-                  <div style={{
-                    maxWidth: '72%', borderRadius: '4px 14px 14px 14px',
-                    background: '#faf5ff', border: '1px solid #ddd6fe',
-                    boxShadow: '0 1px 4px rgba(124,58,237,0.08)', overflow: 'hidden'
-                  }}>
-                    {/* Header — кликабельный для сворачивания */}
-                    <div
-                      onClick={() => toggleThinkingMsg(i)}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '8px 14px', cursor: 'pointer',
-                        borderBottom: msg.collapsed ? 'none' : '1px solid #ede9fe',
-                        userSelect: 'none'
-                      }}
-                    >
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9' }}>Мышление</span>
-                      {msg.streaming && (
-                        <div style={{
-                          width: 7, height: 7, borderRadius: '50%',
-                          border: '1.5px solid #7c3aed', borderTopColor: 'transparent',
-                          animation: 'aiSearchSpin 0.7s linear infinite'
-                        }}/>
-                      )}
-                      <span style={{ marginLeft: 'auto', fontSize: 10, color: '#a78bfa' }}>
-                        {msg.collapsed ? '▶ показать' : '▼ свернуть'}
-                      </span>
-                    </div>
-                    {/* Content */}
-                    {!msg.collapsed && (
-                      <div style={{ padding: '8px 14px 10px', fontSize: 12, color: '#5b21b6', lineHeight: 1.6 }}>
-                        {msg.text
-                          ? <MessageText text={msg.text} />
-                          : <span style={{ color: '#a78bfa', fontStyle: 'italic' }}>Анализирую...</span>
-                        }
-                        {msg.streaming && (
-                          <span style={{
-                            display: 'inline-block', width: 6, height: 12, background: '#a78bfa',
-                            borderRadius: 2, marginLeft: 3, verticalAlign: 'text-bottom',
-                            animation: 'aiCursorBlink 0.8s step-end infinite'
-                          }}/>
-                        )}
-                      </div>
-                    )}
+                  <div style={{ flex: 1, padding: '10px 14px', borderRadius: '0 14px 14px 14px', background: '#f5f3ff', border: '1px solid #e9d5ff' }}>
+                    <div style={{ fontSize: 10, color: '#7c3aed', fontWeight: 700, marginBottom: 6 }}>Мышление:</div>
+                    <MessageText text={msg.text} />
                   </div>
                 </div>
               );
             }
 
-            // ── Ответ одной модели из ансамбля ───────────────────────────
-            if (msg.role === 'ensemble-model') {
-              return (
-                <div key={i} style={{ display: 'flex', gap: 10, padding: '4px 20px' }}>
-                  <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,#0ea5e9,#2563eb)', marginTop: 8 }}>
-                    <svg width="13" height="13" fill="none" stroke="white" viewBox="0 0 24 24" strokeWidth="2">
-                      <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M12 2v2M12 20v2M2 12h2M20 12h2M16.95 16.95l1.41 1.41M5.05 16.95l-1.41 1.41"/>
-                    </svg>
-                  </div>
-                  <div style={{
-                    flex: 1, borderRadius: '4px 14px 14px 14px', padding: '8px 14px',
-                    background: '#f0f9ff', border: '1px solid #bae6fd', maxWidth: '90%'
-                  }}>
-                    <div
-                      onClick={() => setAiChat(prev => prev.map((m, j) => j === i ? { ...m, collapsed: !m.collapsed } : m))}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-                        fontSize: 11, fontWeight: 700, color: '#0369a1', marginBottom: msg.collapsed ? 0 : 6,
-                        userSelect: 'none'
-                      }}
-                    >
-                      <svg width="10" height="10" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
-                        <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M12 2v2M12 20v2M2 12h2M20 12h2M16.95 16.95l1.41 1.41M5.05 16.95l-1.41 1.41"/>
-                      </svg>
-                      {msg.modelName}
-                      <span style={{ marginLeft: 'auto', fontSize: 10, color: '#7dd3fc' }}>
-                        {msg.collapsed ? '▶ показать' : '▼ свернуть'}
-                      </span>
-                    </div>
-                    {!msg.collapsed && (
-                      <div style={{ fontSize: 12, color: '#0c4a6e', lineHeight: 1.6 }}>
-                        <MessageText text={msg.text} />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            }
-
-            // ── Обычное сообщение ────────────────────────────────────────
+            // ── Обычное сообщение ─────────────────────────────────────────
+            const isUser = msg.role === 'user';
+            const isServerLog = !!msg.isServerLog;
             return (
-              <div key={i} style={{
-                display: 'flex',
-                flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-                alignItems: 'flex-start', gap: 10
-              }}>
-                {/* Avatar */}
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexDirection: isUser ? 'row-reverse' : 'row' }}>
                 <div style={{
                   width: 32, height: 32, borderRadius: 9, flexShrink: 0,
-                  background: msg.role === 'user' ? '#2563eb' : (msg.isServerLog ? '#f1f5f9' : '#1e293b'),
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: msg.role === 'user' ? 'white' : (msg.isServerLog ? '#64748b' : '#e2e8f0'),
-                  fontSize: msg.role === 'user' ? 10 : 13, fontWeight: 700
+                  background: isServerLog ? '#f59e0b' : isUser ? '#2563eb' : '#1e293b',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}>
-                  {msg.role === 'user'
-                    ? <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
-                    : (msg.isServerLog ? <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg> : <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>)
-                  }
-                </div>
-
-                {/* Bubble */}
-                <div style={{
-                  maxWidth: '72%', padding: '10px 14px',
-                  borderRadius: msg.role === 'user' ? '14px 4px 14px 14px' : '4px 14px 14px 14px',
-                  background: msg.role === 'user' ? '#2563eb' : (msg.isServerLog || msg.isSearchLog ? '#f8fafc' : 'white'),
-                  color: msg.role === 'user' ? 'white' : (msg.isSearchLog ? '#2563eb' : '#374151'),
-                  boxShadow: msg.role === 'user' ? '0 2px 8px rgba(37,99,235,0.2)' : '0 1px 4px rgba(0,0,0,0.06)',
-                  border: msg.role === 'user' ? 'none' : (msg.isSearchLog ? '1px solid #dbeafe' : '1px solid #f1f5f9'),
-                  fontSize: 13, lineHeight: 1.65
-                }}>
-                  {msg.isServerLog || msg.isSearchLog || msg.role === 'user' ? (
-                    <span style={{
-                      whiteSpace: 'pre-wrap',
-                      fontFamily: msg.isServerLog ? 'JetBrains Mono, Consolas, monospace' : 'inherit',
-                      fontSize: msg.isServerLog ? 11 : 13
-                    }}>{msg.text}</span>
+                  {isServerLog ? (
+                    <svg width="16" height="16" fill="none" stroke="#fef3c7" viewBox="0 0 24 24" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 17l6-6-6-6M12 19h8"/>
+                    </svg>
                   ) : (
-                    <MessageText text={msg.text} />
+                    <svg width="16" height="16" fill="none" stroke="#fff" viewBox="0 0 24 24" strokeWidth="1.5">
+                      {isUser
+                        ? <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                        : <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                      }
+                    </svg>
                   )}
-                  {msg.streaming && (
-                    <span style={{
-                      display: 'inline-block', width: 7, height: 14, background: '#94a3b8',
-                      borderRadius: 2, marginLeft: 4, verticalAlign: 'text-bottom',
-                      animation: 'aiCursorBlink 0.8s step-end infinite'
-                    }}/>
-                  )}
+                </div>
+                <div style={{ flex: 1, maxWidth: '80%' }}>
+                  <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, textAlign: isUser ? 'right' : 'left' }}>
+                    {isServerLog ? 'Сервер' : isUser ? 'Вы' : 'Модель'}
+                  </div>
+                  <div style={{
+                    padding: '10px 14px', borderRadius: isUser ? '14px 0 14px 14px' : '0 14px 14px 14px',
+                    background: isServerLog ? '#fef3c7' : isUser ? '#eff6ff' : 'white',
+                    border: `1px solid ${isServerLog ? '#fcd34d' : isUser ? '#bfdbfe' : '#f1f5f9'}`,
+                    color: isServerLog ? '#92400e' : isUser ? '#1e40af' : '#374151',
+                    fontSize: 13, lineHeight: 1.6, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    overflowWrap: 'break-word', maxWidth: '100%'
+                  }}>
+                    {msg.isHtml || msg.isMarkdown ? (
+                      <div dangerouslySetInnerHTML={{ __html: msg.text }} />
+                    ) : (
+                      <MessageText text={msg.text} />
+                    )}
+                    {msg.streaming && (
+                      <span style={{
+                        display: 'inline-block', width: 7, height: 14, background: '#94a3b8',
+                        borderRadius: 2, marginLeft: 4, verticalAlign: 'text-bottom',
+                        animation: 'aiCursorBlink 0.8s step-end infinite'
+                      }}/>
+                    )}
+                  </div>
                 </div>
               </div>
             );
           })}
+          { !aiShowHistory && (aiChat.length > 0 || aiLoading) && (
+            <div style={{ height: 60 }} />
+          )}
 
           {/* Typing dots */}
           {aiLoading && !aiChat.find(m => m.streaming) && (

@@ -667,6 +667,11 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
   const [aiLoading, setAiLoading] = React.useState(false);
   const [aiChat, setAiChat] = React.useState([]);
   const [aiInput, setAiInput] = React.useState('');
+  const [aiChatHistory, setAiChatHistory] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('intra-ai-chat-history') || '[]'); } catch { return []; }
+  });
+  const [aiShowHistory, setAiShowHistory] = React.useState(false);
+  const [aiCurrentConversationId, setAiCurrentConversationId] = React.useState(null);
   const [aiContextSize, setAiContextSize] = React.useState(() => Number(localStorage.getItem('intra-ai-context')) || 4096);
   const [aiServerContextSize, setAiServerContextSize] = React.useState(4096);
   const [aiLoadProgress, setAiLoadProgress] = React.useState(null); // null=idle, 0-100=loading
@@ -1290,20 +1295,60 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                     </div>
                   )}
                   <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
+                    {/* History toggle */}
+                    <div style={{ display:'flex', gap:4, marginBottom:8 }}>
+                      <button onClick={() => setAiShowHistory(false)} 
+                        style={{ flex:1, padding:'4px 8px', borderRadius:6, border:'none', fontSize:10, fontWeight:600,
+                          background: !aiShowHistory ? '#2563eb' : '#e2e8f0', color: !aiShowHistory ? 'white' : '#64748b', cursor:'pointer' }}>
+                        Текущий чат
+                      </button>
+                      <button onClick={() => setAiShowHistory(true)}
+                        style={{ flex:1, padding:'4px 8px', borderRadius:6, border:'none', fontSize:10, fontWeight:600,
+                          background: aiShowHistory ? '#2563eb' : '#e2e8f0', color: aiShowHistory ? 'white' : '#64748b', cursor:'pointer',
+                          display:'flex', alignItems:'center', justifyContent:'center', gap:4 }}>
+                        История {aiChatHistory.length > 0 && `(${aiChatHistory.length})`}
+                      </button>
+                    </div>
                     <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column', gap:6, marginBottom:8, minHeight:80 }}>
-                      {aiChat.length === 0 && (
-                        <div style={{ textAlign:'center', padding:'20px 0', color:'#94a3b8', fontSize:12 }}>
-                          {aiModel ? 'Задайте вопрос модели...' : 'Выберите файл .gguf для чата'}
-                        </div>
+                      {aiShowHistory ? (
+                        aiChatHistory.length === 0 ? (
+                          <div style={{ textAlign:'center', padding:'20px 0', color:'#94a3b8', fontSize:12 }}>
+                            История чатов пуста
+                          </div>
+                        ) : (
+                          aiChatHistory.map((conv) => (
+                            <div key={conv.id} onClick={() => { setAiChat(conv.messages); setAiShowHistory(false); }}
+                              style={{ padding:'8px 10px', borderRadius:9, fontSize:11, cursor:'pointer', background:'#f8fafc',
+                                border:'1px solid #e2e8f0', marginBottom:4 }}>
+                              <div style={{ color:'#64748b', marginBottom:4, fontSize:10 }}>
+                                {new Date(conv.timestamp).toLocaleString('ru-RU')}
+                              </div>
+                              <div style={{ color:'#374151' }}>
+                                {conv.messages[0]?.text?.slice(0, 100)}{conv.messages[0]?.text?.length > 100 ? '...' : ''}
+                              </div>
+                              <div style={{ color:'#94a3b8', marginTop:4, fontSize:10 }}>
+                                {conv.messages.length} сообщений
+                              </div>
+                            </div>
+                          ))
+                        )
+                      ) : (
+                        <>
+                          {aiChat.length === 0 && (
+                            <div style={{ textAlign:'center', padding:'20px 0', color:'#94a3b8', fontSize:12 }}>
+                              {aiModel ? 'Задайте вопрос модели...' : 'Выберите файл .gguf для чата'}
+                            </div>
+                          )}
+                          {aiChat.map((msg,i) => (
+                            <div key={i} style={{ padding:'8px 10px', borderRadius:9, fontSize:12, lineHeight:1.5, whiteSpace:'pre-wrap',
+                              background: msg.role==='user' ? '#eff6ff' : '#f8fafc',
+                              color: msg.role==='user' ? '#1e40af' : '#374151',
+                              alignSelf: msg.role==='user' ? 'flex-end' : 'flex-start', maxWidth:'90%'
+                            }}>{msg.text}</div>
+                          ))}
+                          {aiLoading && <div style={{ fontSize:11, color:'#94a3b8', fontStyle:'italic', padding:'4px 10px' }}>Генерация...</div>}
+                        </>
                       )}
-                      {aiChat.map((msg,i) => (
-                        <div key={i} style={{ padding:'8px 10px', borderRadius:9, fontSize:12, lineHeight:1.5, whiteSpace:'pre-wrap',
-                          background: msg.role==='user' ? '#eff6ff' : '#f8fafc',
-                          color: msg.role==='user' ? '#1e40af' : '#374151',
-                          alignSelf: msg.role==='user' ? 'flex-end' : 'flex-start', maxWidth:'90%'
-                        }}>{msg.text}</div>
-                      ))}
-                      {aiLoading && <div style={{ fontSize:11, color:'#94a3b8', fontStyle:'italic', padding:'4px 10px' }}>Генерация...</div>}
                       <div ref={aiChatEndRef} />
                     </div>
                     {/* Response status bar */}
@@ -1341,9 +1386,33 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                         </button>
                       )}
                       {aiChat.length > 0 && (
-                        <button title="Очистить чат" onClick={() => { setAiChat([]); window.electronAPI?.aiClearHistory?.(); }}
+                        <button title="Новый чат (сохранить текущий)" onClick={() => {
+                          // Save current conversation before clearing
+                          const userMessages = aiChat.filter(m => m.role === 'user');
+                          if (userMessages.length > 0) {
+                            const conversation = {
+                              id: Date.now(),
+                              timestamp: new Date().toISOString(),
+                              messages: aiChat.filter(m => !m.isServerLog && !m.role === 'status'),
+                              source: 'sidebar'
+                            };
+                            setAiChatHistory(hist => {
+                              const newHist = [conversation, ...hist].slice(0, 50);
+                              localStorage.setItem('intra-ai-chat-history', JSON.stringify(newHist));
+                              return newHist;
+                            });
+                          }
+                          setAiChat([]);
+                          window.electronAPI?.aiClearHistory?.();
+                        }}
                           style={{ width:32, height:32, borderRadius:7, border:'none', background:'#f1f5f9', color:'#64748b', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', flexShrink:0 }}>
-                          <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                          <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                        </button>
+                      )}
+                      {aiChatHistory.length > 0 && (
+                        <button title="Очистить историю" onClick={() => { if (confirm('Удалить всю историю чатов?')) { setAiChatHistory([]); localStorage.removeItem('intra-ai-chat-history'); } }}
+                          style={{ width:32, height:32, borderRadius:7, border:'none', background:'#fef3c7', color:'#d97706', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', flexShrink:0 }}>
+                          <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M12 2v20M2 12h20"/><path d="M4 4l16 16M20 4L4 20"/></svg>
                         </button>
                       )}
                       {aiLoaded && (
