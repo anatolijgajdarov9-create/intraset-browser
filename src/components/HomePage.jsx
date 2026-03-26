@@ -1584,7 +1584,7 @@ export default function HomePage({
             <div>
               <div style={{ fontSize:11, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:8 }}>О браузере</div>
               <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
-                {[['Версия','1.0.0'],['Движок','Electron + React 18'],['Сборка','Vite 5'],['Автор','Krasoft Labs']].map(([k,v]) => (
+                {[['Версия','1.0.0'],['Движок','Intra Browser'],['Сборка','Vite 5'],['Автор','Krasoft Labs']].map(([k,v]) => (
                   <div key={k} style={{ display:'flex', justifyContent:'space-between', padding:'7px 12px', borderRadius:7, background:'#f8fafc' }}>
                     <span style={{ fontSize:12, color:'#64748b' }}>{k}</span>
                     <span style={{ fontSize:12, color:'#1e293b', fontFamily:'monospace', fontWeight:600 }}>{v}</span>
