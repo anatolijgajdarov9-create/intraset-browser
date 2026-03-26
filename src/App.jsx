@@ -679,6 +679,14 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
   const [aiStreamedTokens, setAiStreamedTokens] = React.useState(0);
   const aiChatEndRef = React.useRef(null);
 
+  // External AI Providers (for page analysis without GGUF model)
+  const [aiProviders, setAiProviders] = React.useState([]);
+  const [activeProvider, setActiveProvider] = React.useState(null);
+  const [providerEnabled, setProviderEnabled] = React.useState(false);
+  const [selectedModel, setSelectedModel] = React.useState('');
+  const [openRouterModels, setOpenRouterModels] = React.useState([]);
+  const [aiProcessingStatus, setAiProcessingStatus] = React.useState('');
+
   // Downloads - используем polling вместо событий
   const [downloads, setDownloads] = React.useState([]);
 
@@ -778,6 +786,60 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
     return () => { offToken(); offDone(); offError(); offLog(); };
   }, []);
 
+  // Initialize external AI providers
+  React.useEffect(() => {
+    if (!isElectron) return;
+    window.electronAPI.aiGetProviders().then(data => {
+      setAiProviders(data.providers || []);
+      setActiveProvider(data.activeProvider);
+      setProviderEnabled(data.enabled);
+      setSelectedModel(data.activeModel || '');
+
+      // Fetch OpenRouter models if that provider is enabled
+      if (data.activeProvider === 'openrouter' && data.enabled) {
+        setAiProcessingStatus('Загрузка списка моделей...');
+        window.electronAPI.aiGetOpenRouterModels().then(res => {
+          setAiProcessingStatus('');
+          if (res.success && res.models) {
+            setOpenRouterModels(res.models);
+            if (!data.activeModel || !res.models.find(m => m.id === data.activeModel)) {
+              setSelectedModel(res.models[0]?.id || '');
+            }
+          }
+        }).catch(() => { setAiProcessingStatus(''); });
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Listen for external AI provider events for sidebar panel
+  React.useEffect(() => {
+    if (!isElectron) return;
+    const offProviderToken = window.electronAPI.onAiProviderToken((text) => {
+      if (isAiChatTabActiveRef.current) return;
+      setAiStreamedTokens(n => n + 1);
+      setAiChat(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.streaming) {
+          return [...prev.slice(0, -1), { role: 'bot', text: (last.text || '') + text, streaming: true }];
+        }
+        return [...prev, { role: 'bot', text, streaming: true }];
+      });
+    });
+    const offProviderDone = window.electronAPI.onAiProviderDone(() => {
+      if (isAiChatTabActiveRef.current) return;
+      setAiLoading(false);
+      setAiStreamedTokens(0);
+      setAiChat(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, streaming: false } : m));
+    });
+    const offProviderError = window.electronAPI.onAiProviderError((msg) => {
+      if (isAiChatTabActiveRef.current) return;
+      setAiLoading(false);
+      setAiStreamedTokens(0);
+      setAiChat(prev => [...prev, { role: 'bot', text: `❌ Ошибка: ${msg}` }]);
+    });
+    return () => { offProviderToken(); offProviderDone(); offProviderError(); };
+  }, []);
+
   const handleLoadModel = async () => {
     if (!isElectron) return;
 
@@ -855,25 +917,43 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
   };
 
   const sendAiMessage = () => {
-    if (!aiInput.trim() || !aiLoaded || aiLoading) return;
+    if (!aiInput.trim() || (!aiLoaded && !providerEnabled) || aiLoading) return;
     const text = aiInput.trim();
     setAiInput('');
     setAiStreamedTokens(0);
     setAiChat(prev => [...prev, { role: 'user', text }]);
     setAiLoading(true);
+
+    // Use provider API if GGUF not loaded but provider is enabled
+    if (!aiLoaded && providerEnabled) {
+      setAiProcessingStatus('Обработка запроса...');
+      window.electronAPI.aiChatWithProvider(text, selectedModel)
+        .then(result => {
+          setAiLoading(false);
+          setAiProcessingStatus('');
+          if (!result?.success && result?.error) {
+            setAiChat(prev => [...prev, { role: 'bot', text: `❌ ${result.error}` }]);
+          }
+        })
+        .catch(() => { setAiLoading(false); setAiProcessingStatus(''); });
+      return;
+    }
+
     // Ответ приходит через события ai-token / ai-done / ai-error
     window.electronAPI.aiChat(text).then(result => {
+      setAiLoading(false);
       if (!result?.success && result?.error) {
-        setAiLoading(false);
         setAiChat(prev => [...prev, { role: 'bot', text: `❌ ${result.error}` }]);
       }
     }).catch(() => { setAiLoading(false); });
   };
 
   const analyzePageWith = async (label, prompt) => {
-    if (!aiLoaded || aiLoading || !isElectron) return;
+    if ((!aiLoaded && !providerEnabled) || aiLoading || !isElectron) return;
+    setAiProcessingStatus('Чтение страницы...');
     const res = await window.electronAPI.aiGetPageContent();
     if (!res.success) {
+      setAiProcessingStatus('');
       setAiChat(prev => [...prev, { role: 'bot', text: `❌ Не удалось получить содержимое: ${res.error}` }]);
       return;
     }
@@ -885,11 +965,31 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
     const fullPrompt = `${prompt}\n\nСтраница: "${res.title}"\n\nФрагмент текста:\n${content}\n\nОтвет:`;
     setAiChat(prev => [...prev, { role: 'user', text: label }]);
     setAiLoading(true);
+
+    // Use provider API if GGUF not loaded but provider is enabled
+    if (!aiLoaded && providerEnabled) {
+      setAiProcessingStatus('Анализ страницы ИИ...');
+      window.electronAPI.aiChatWithProvider(fullPrompt, selectedModel)
+        .then(result => {
+          setAiLoading(false);
+          setAiProcessingStatus('');
+          if (!result?.success) {
+            setAiChat(prev => [...prev, { role: 'bot', text: `❌ ${result?.error || 'Модель не вернула ответ'}` }]);
+          }
+        })
+        .catch(() => {
+          setAiLoading(false);
+          setAiProcessingStatus('');
+          setAiChat(prev => [...prev, { role: 'bot', text: '❌ Ошибка запроса к API' }]);
+        });
+      return;
+    }
+
     // Изолированный запрос — не записывается в историю диалога
     window.electronAPI.aiAnalyzePage(fullPrompt)
       .then(result => {
+        setAiLoading(false);
         if (!result?.success) {
-          setAiLoading(false);
           setAiChat(prev => [...prev, { role: 'bot', text: `❌ ${result?.error || 'Модель не вернула ответ'}` }]);
         }
       })
@@ -899,14 +999,74 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
       });
   };
 
-  const analyzeSelectionWith = async (text, label, prompt) => {
-    if (!aiLoaded || aiLoading || !isElectron) return;
+  const analyzeSelectionWith = async (text, label, prompt, promptType) => {
+    if ((!aiLoaded && !providerEnabled) || aiLoading || !isElectron) return;
     setAiChat(prev => [...prev, { role: 'user', text: `${label}:\n"${text.slice(0, 200)}${text.length > 200 ? '…' : ''}"` }]);
     setAiLoading(true);
+
+    // Use provider API if GGUF not loaded but provider is enabled
+    if (!aiLoaded && providerEnabled) {
+      // Special case: web search + AI analysis
+      if (promptType === 'search') {
+        try {
+          setAiProcessingStatus('Поиск в интернете...');
+          let searchResult = await window.electronAPI.aiWebSearch(text);
+          if (!searchResult.success) {
+            searchResult = await window.electronAPI.aiWebSearchBing(text);
+          }
+          if (!searchResult.success) {
+            setAiLoading(false);
+            setAiProcessingStatus('');
+            setAiChat(prev => [...prev, { role: 'bot', text: `❌ ${searchResult.error || 'Ошибка поиска'}` }]);
+            return;
+          }
+          setAiProcessingStatus('Обработка результатов ИИ...');
+          const searchPrompt = `На основе результатов веб-поиска по запросу "${text}", ответь на вопрос и укажи источники.\n\nРезультаты поиска:\n${searchResult.results}\n\nИсточники: ${(searchResult.urls || []).join(', ')}`;
+          window.electronAPI.aiChatWithProvider(searchPrompt, selectedModel)
+            .then(result => {
+              setAiLoading(false);
+              setAiProcessingStatus('');
+              if (!result?.success) {
+                setAiChat(prev => [...prev, { role: 'bot', text: result?.error || 'Нет ответа от API' }]);
+              }
+            })
+            .catch(() => {
+              setAiLoading(false);
+              setAiProcessingStatus('');
+              setAiChat(prev => [...prev, { role: 'bot', text: '❌ Ошибка запроса к API' }]);
+            });
+          return;
+        } catch (e) {
+          setAiLoading(false);
+          setAiProcessingStatus('');
+          setAiChat(prev => [...prev, { role: 'bot', text: '❌ Ошибка поиска' }]);
+          return;
+        }
+      }
+
+      // Regular analysis
+      setAiProcessingStatus('Анализ текста...');
+      const fullPrompt = `${prompt}\n\nТекст для анализа:\n"${text.slice(0, 3000)}${text.length > 3000 ? '...' : ''}"`;
+      window.electronAPI.aiChatWithProvider(fullPrompt, selectedModel)
+        .then(result => {
+          setAiLoading(false);
+          setAiProcessingStatus('');
+          if (!result?.success) {
+            setAiChat(prev => [...prev, { role: 'bot', text: result?.error || 'Нет ответа от API' }]);
+          }
+        })
+        .catch(() => {
+          setAiLoading(false);
+          setAiProcessingStatus('');
+          setAiChat(prev => [...prev, { role: 'bot', text: '❌ Ошибка запроса к API' }]);
+        });
+      return;
+    }
+
     window.electronAPI.aiAnalyzeSelection(text, prompt)
       .then(result => {
+        setAiLoading(false);
         if (!result?.success) {
-          setAiLoading(false);
           setAiChat(prev => [...prev, { role: 'bot', text: result?.error || 'Нет ответа от модели' }]);
         }
       })
@@ -928,11 +1088,11 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
 
   // Handle incoming selection request in the sidebar AI panel
   React.useEffect(() => {
-    if (!selectionRequest || !aiLoaded || aiLoading) return;
-    const { text, label, prompt } = selectionRequest;
+    if (!selectionRequest || (!aiLoaded && !providerEnabled) || aiLoading) return;
+    const { text, label, prompt, promptType } = selectionRequest;
     onSelectionHandled?.();
-    analyzeSelectionWith(text, label, prompt);
-  }, [selectionRequest, aiLoaded]); // eslint-disable-line
+    analyzeSelectionWith(text, label, prompt, promptType);
+  }, [selectionRequest, aiLoaded, providerEnabled]); // eslint-disable-line
 
   // AI context usage estimation (for sidebar panel)
   const aiEstimatedTokens = aiChat
@@ -1221,6 +1381,32 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
 
               {panel === 'ai' && (
                 <div style={{ display:'flex', flexDirection:'column', height:'100%', gap:10 }}>
+                  {/* Provider info when no GGUF model loaded */}
+                  {providerEnabled && !aiLoaded && activeProvider === 'openrouter' && openRouterModels.length > 0 && (
+                    <div style={{ padding:'12px', borderRadius:10, background:'#f0f9ff', border:'1px solid #bae6fd'}}>
+                      <div style={{ fontSize:12, fontWeight:700, color:'#0369a1', marginBottom:4 }}>
+                        OpenRouter
+                      </div>
+                      <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); window.electronAPI.aiSetModel(e.target.value); }}
+                        style={{ width:'100%', fontSize:11, padding:'5px 8px', borderRadius:6, border:'1px solid #7dd3fc', background:'white', cursor:'pointer', marginBottom:4 }}>
+                        {openRouterModels.map(m => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                      </select>
+                      <div style={{ fontSize:10, color:'#22c55e'}}>✓ Подключено через API</div>
+                    </div>
+                  )}
+                  {providerEnabled && !aiLoaded && activeProvider !== 'openrouter' && (
+                    <div style={{ padding:'12px', borderRadius:10, background:'#f0f9ff', border:'1px solid #bae6fd'}}>
+                      <div style={{ fontSize:12, fontWeight:700, color:'#0369a1', marginBottom:4 }}>
+                        {activeProvider === 'openai' ? 'OpenAI' : activeProvider === 'anthropic' ? 'Anthropic' : activeProvider === 'google' ? 'Google Gemini' : 'AI Provider'}
+                      </div>
+                      <div style={{ fontSize:10, color:'#64748b', marginBottom:4 }}>
+                        Модель: <span style={{color:'#0369a1', fontWeight:600}}>{selectedModel || 'Не выбрана'}</span>
+                      </div>
+                      <div style={{ fontSize:10, color:'#22c55e'}}>✓ Подключено через API</div>
+                    </div>
+                  )}
                   <div style={{ padding:'12px', borderRadius:10, background: aiLoaded ? '#f0fdf4' : '#f8fafc', border:`1px solid ${aiLoaded ? '#bbf7d0' : '#e2e8f0'}` }}>
                     <div style={{ fontSize:12, fontWeight:700, color: aiLoaded ? '#166534' : '#64748b', marginBottom:4 }}>
                       {aiLoaded ? aiModel?.name : aiLoading ? 'Загрузка...' : 'Модель не выбрана'}
@@ -1275,7 +1461,7 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                     </div>
                   ) : null}
 
-                  {aiLoaded && activeTab && !activeTab.isHome && (
+                  {(aiLoaded || providerEnabled) && activeTab && !activeTab.isHome && (
                     <div style={{ marginBottom:8 }}>
                       <div style={{ fontSize:10, color:'#94a3b8', marginBottom:4 }}>Действия со страницей:</div>
                       <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
@@ -1283,6 +1469,9 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                           ['Резюмировать', 'Сделай краткое резюме этой страницы на русском языке.'],
                           ['Тезисы', 'Выдели ключевые тезисы и факты этой страницы в виде списка.'],
                           ['Объяснить', 'Объясни простыми словами, о чём эта страница.'],
+                          ['Перевести', 'Переведи содержимое страницы на русский язык.'],
+                          ['Сократить', 'Сократи и сделай краткое изложение основных мыслей страницы.'],
+                          ['Расширить', 'Добавь больше деталей и контекста к содержанию страницы.'],
                         ].map(([label, prompt]) => (
                           <button key={label} onClick={() => analyzePageWith(label, prompt)} disabled={aiLoading}
                             style={{ padding:'4px 8px', borderRadius:6, border:'1px solid #bfdbfe', background:'#eff6ff',
@@ -1336,7 +1525,7 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                         <>
                           {aiChat.length === 0 && (
                             <div style={{ textAlign:'center', padding:'20px 0', color:'#94a3b8', fontSize:12 }}>
-                              {aiModel ? 'Задайте вопрос модели...' : 'Выберите файл .gguf для чата'}
+                              {(aiModel || providerEnabled) ? 'Задайте вопрос модели...' : 'Выберите файл .gguf для чата'}
                             </div>
                           )}
                           {aiChat.map((msg,i) => (
@@ -1352,11 +1541,11 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                       <div ref={aiChatEndRef} />
                     </div>
                     {/* Response status bar */}
-                    {aiLoading && aiLoaded && (
+                    {(aiLoading && (aiLoaded || providerEnabled)) && (
                       <div style={{ borderRadius:7, padding:'7px 10px', background:'#f8fafc', border:'1px solid #e2e8f0' }}>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
                           <span style={{ fontSize:11, color:'#64748b' }}>
-                            {aiStreamedTokens === 0 ? 'Ожидание ответа...' : `Генерация... ${aiStreamedTokens} токенов`}
+                            {aiStreamedTokens === 0 ? (aiProcessingStatus || 'Ожидание ответа...') : `Генерация... ${aiStreamedTokens} токенов`}
                           </span>
                           {aiStreamedTokens > 0 && <span style={{ fontSize:11, color:'#2563eb', fontWeight:600 }}>{Math.min(Math.round(aiStreamedTokens / 10.24), 95)}%</span>}
                         </div>
@@ -1371,12 +1560,12 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                     <div style={{ display:'flex', gap:5, alignItems:'center' }}>
                       <input value={aiInput} onChange={e=>setAiInput(e.target.value)}
                         onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey) sendAiMessage(); }}
-                        placeholder={aiLoaded ? 'Введите сообщение...' : 'Загрузите модель...'}
-                        disabled={!aiLoaded || aiLoading}
+                        placeholder={(aiLoaded || providerEnabled) ? 'Введите сообщение...' : 'Загрузите модель...'}
+                        disabled={(!aiLoaded && !providerEnabled) || aiLoading}
                         style={{ flex:1, padding:'6px 9px', borderRadius:7, border:'1px solid #e2e8f0', fontSize:12, outline:'none' }}
                       />
-                      <button onClick={sendAiMessage} disabled={!aiLoaded || !aiInput.trim() || aiLoading} title="Отправить"
-                        style={{ width:32, height:32, borderRadius:7, border:'none', background: aiLoaded&&aiInput.trim()&&!aiLoading ? '#2563eb' : '#e2e8f0', display:'flex', alignItems:'center', justifyContent:'center', cursor: aiLoaded&&aiInput.trim()&&!aiLoading ? 'pointer' : 'not-allowed', flexShrink:0 }}>
+                      <button onClick={sendAiMessage} disabled={(!aiLoaded && !providerEnabled) || !aiInput.trim() || aiLoading} title="Отправить"
+                        style={{ width:32, height:32, borderRadius:7, border:'none', background: (aiLoaded || providerEnabled) && aiInput.trim() && !aiLoading ? '#2563eb' : '#e2e8f0', display:'flex', alignItems:'center', justifyContent:'center', cursor: (aiLoaded || providerEnabled) && aiInput.trim() && !aiLoading ? 'pointer' : 'not-allowed', flexShrink:0 }}>
                         <svg width="12" height="12" fill="none" stroke={aiLoaded&&aiInput.trim()&&!aiLoading ? 'white' : '#94a3b8'} viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
                       </button>
                       {aiLastBotMsg && (

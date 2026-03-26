@@ -46,13 +46,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiGetPageContent:   ()          => ipcRenderer.invoke('ai-get-page-content'),
   aiAnalyzePage:      (prompt)    => ipcRenderer.invoke('ai-analyze-page', { prompt }),
   aiChat:         (message)   => ipcRenderer.invoke('ai-chat', { message }),
+
+  // External AI Providers (OpenAI, Anthropic, Google)
+  aiGetProviders: () => ipcRenderer.invoke('ai-get-providers'),
+  aiSetProvider: (provider) => ipcRenderer.invoke('ai-set-provider', { provider }),
+  aiSetApiKey: (apiKey, provider = null) => ipcRenderer.invoke('ai-set-api-key', { provider, apiKey }),
+  aiSetModel: (model) => ipcRenderer.invoke('ai-set-model', { model }),
+  aiWebSearch: (query) => ipcRenderer.invoke('ai-web-search', { query }),
+  aiWebSearchBing: (query) => ipcRenderer.invoke('ai-web-search-bing', { query }),
+  aiGetProviderStatus: (provider) => ipcRenderer.invoke('ai-get-provider-status', { provider }),
+  aiChatWithProvider: (message, model, options) => ipcRenderer.invoke('ai-chat-with-provider', { message, model, options }),
+  // Provider streaming events
+  onAiProviderToken: (cb) => { const fn = (_e, t) => cb(t); ipcRenderer.on('ai-provider-token', fn); return () => ipcRenderer.removeListener('ai-provider-token', fn); },
+  onAiProviderDone: (cb) => { const fn = () => cb(); ipcRenderer.on('ai-provider-done', fn); return () => ipcRenderer.removeListener('ai-provider-done', fn); },
+  onAiProviderError: (cb) => { const fn = (_e, msg) => cb(msg); ipcRenderer.on('ai-provider-error', fn); return () => ipcRenderer.removeListener('ai-provider-error', fn); },
   aiAbort:        ()          => ipcRenderer.send('ai-abort'),
   aiClearHistory: ()          => ipcRenderer.invoke('ai-clear-history'),
-  aiGetHistory:  ()          => ipcRenderer.invoke('ai-get-history'),
+  // AI Chat History
+  aiHistoryList: () => ipcRenderer.invoke('ai-history-list'),
+  aiHistoryLoad: (sessionId) => ipcRenderer.invoke('ai-history-load', { sessionId }),
+  aiHistorySave: (sessionId, messages, title, provider, model) => ipcRenderer.invoke('ai-history-save', { sessionId, messages, title, provider, model }),
+  aiHistoryDelete: (sessionId) => ipcRenderer.invoke('ai-history-delete', { sessionId }),
+  aiHistoryRename: (sessionId, title) => ipcRenderer.invoke('ai-history-rename', { sessionId, title }),
+  aiHistoryGetCurrent: () => ipcRenderer.invoke('ai-history-get-current'),
+  aiHistoryNewSession: () => ipcRenderer.invoke('ai-history-new-session'),
   aiAnalyzeSelection: (text, prompt) => ipcRenderer.invoke('ai-analyze-selection', { text, prompt }),
   aiWebSearch:    (query)     => ipcRenderer.invoke('ai-web-search', { query }),
-  aiThinkResponse: (prompt)   => ipcRenderer.invoke('ai-think-response', { prompt }),
+  // aiThinkResponse: (prompt) => ipcRenderer.invoke('ai-think-response', { prompt }), // DISABLED: мышление отключено
   aiFetchUrl:     (url)       => ipcRenderer.invoke('ai-fetch-url', { url }),
+  aiWikiSearch:   (query)     => ipcRenderer.invoke('ai-wiki-search', { query }),
+  aiWikiPage:     (title)     => ipcRenderer.invoke('ai-wiki-page', { title }),
   aiScanModelsFolder: (folderPath) => ipcRenderer.invoke('ai-scan-models-folder', { folderPath }),
   aiEnsembleChat: (message, modelPaths, serverPath, contextSize, gpuLayers) =>
     ipcRenderer.invoke('ai-ensemble-chat', { message, modelPaths, serverPath, contextSize, gpuLayers }),
@@ -62,7 +85,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAiError:     (cb) => { const fn = (_e, msg) => cb(msg); ipcRenderer.on('ai-error',      fn); return () => ipcRenderer.removeListener('ai-error',      fn); },
   onAiServerLog: (cb) => { const fn = (_e, t)   => cb(t);   ipcRenderer.on('ai-server-log', fn); return () => ipcRenderer.removeListener('ai-server-log', fn); },
   onAiSelectionRequest: (cb) => { const fn = (_e, data) => cb(data); ipcRenderer.on('ai-selection-request', fn); return () => ipcRenderer.removeListener('ai-selection-request', fn); },
-  onAiThinkToken: (cb) => { const fn = (_e, t) => cb(t); ipcRenderer.on('ai-think-token', fn); return () => ipcRenderer.removeListener('ai-think-token', fn); },
+  // onAiThinkToken: (cb) => { const fn = (_e, t) => cb(t); ipcRenderer.on('ai-think-token', fn); return () => ipcRenderer.removeListener('ai-think-token', fn); }, // DISABLED: мышление отключено
   onAiEnsembleProgress: (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('ai-ensemble-progress', fn); return () => ipcRenderer.removeListener('ai-ensemble-progress', fn); },
   onAiEnsembleModelDone: (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('ai-ensemble-model-done', fn); return () => ipcRenderer.removeListener('ai-ensemble-model-done', fn); },
 
@@ -71,6 +94,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Context menu actions from BrowserView
   onOpenPrivateTab: (cb) => { const fn = (_e, data) => cb(data); ipcRenderer.on('open-private-tab', fn); return () => ipcRenderer.removeListener('open-private-tab', fn); },
+
+  // AI Provider - clipboard check for image support detection
+  aiCheckClipboard: () => ipcRenderer.invoke('ai-check-clipboard'),
+  aiGetOpenRouterModels: () => ipcRenderer.invoke('ai-get-openrouter-models'),
 
   // Downloads
   getDownloads: () => ipcRenderer.invoke('get-downloads'),

@@ -251,16 +251,15 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   const [aiStreamedTokens, setAiStreamedTokens] = useState(0);
   const [searchMode, setSearchMode] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [deepThinkMode, setDeepThinkMode] = useState(false);
+  // const [deepThinkMode, setDeepThinkMode] = useState(false); // DISABLED: мышление отключено
   const cancelledRef = useRef(false);
 
-  // ── Chat history ────────────────────────────────────────────────────────────
-  const [aiChatHistory, setAiChatHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('intra-ai-chat-history-aichat') || '[]'); } catch { return []; }
-  });
-  const [aiShowHistory, setAiShowHistory] = useState(false);
-
-  // ── History sync state (not used yet) ──────────────────────────────────────
+  // ── Research Mode ─────────────────────────────────────────────────────────
+  const [researchMode, setResearchMode] = useState(false);
+  const [wikiSearch, setWikiSearch] = useState(true);
+  const [chainOfThought, setChainOfThought] = useState(true);
+  const [selfCorrection, setSelfCorrection] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
 
   // ── Pipeline animation state ──────────────────────────────────────────────
   const [pipelineVisible, setPipelineVisible] = useState(true);
@@ -272,6 +271,25 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   const [ensembleModels, setEnsembleModels] = useState([]);   // [{name, path}]
   const [ensembleMode, setEnsembleMode] = useState(false);
   const [ensembleProgress, setEnsembleProgress] = useState(null); // {phase, modelName, step, total}
+
+  // ── External AI Providers ─────────────────────────────────────────────────
+  const [aiProviders, setAiProviders] = useState([]);
+  const [activeProvider, setActiveProvider] = useState(null);
+  const [providerModels, setProviderModels] = useState([]);
+  const [openRouterModels, setOpenRouterModels] = useState([]); // Real models from OpenRouter
+  const [selectedModel, setSelectedModel] = useState('');
+  const [providerEnabled, setProviderEnabled] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [providerLoading, setProviderLoading] = useState(false);
+
+  // ── Chat History ──────────────────────────────────────────────────────────
+  const [chatSessions, setChatSessions] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [editingSessionTitle, setEditingSessionTitle] = useState(null);
+  const [sessionTitleInput, setSessionTitleInput] = useState('');
+
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -343,6 +361,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
       });
     }) ?? (() => {});
 
+    /* // DISABLED: мышление отключено
     const offThinkToken = window.electronAPI.onAiThinkToken?.((text) => {
       setAiChat(prev => {
         // Append to last thinking bubble
@@ -356,6 +375,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
         return [...prev, { role: 'thinking', text, streaming: true, collapsed: false }];
       });
     }) ?? (() => {});
+    */ // КОНЕЦ DISABLED
 
     const offEnsembleProgress = window.electronAPI.onAiEnsembleProgress?.((data) => {
       setEnsembleProgress(data);
@@ -402,8 +422,170 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
       ]);
     }) ?? (() => {});
 
-    return () => { offToken(); offDone(); offError(); offLog(); offThinkToken(); offEnsembleProgress(); offEnsembleModelDone(); };
+    return () => { offToken(); offDone(); offError(); offLog(); /* offThinkToken(); */ offEnsembleProgress(); offEnsembleModelDone(); };
   }, []);
+
+  // ── External AI Providers ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isElectron) return;
+    
+    console.log('[AiChat] useEffect: calling aiGetProviders');
+    
+    const fetchProviders = async () => {
+      try {
+        const data = await window.electronAPI.aiGetProviders();
+        console.log('[AiChat] aiGetProviders result:', data.activeProvider, data.activeModel, 'enabled:', data.enabled);
+        
+        setAiProviders(data.providers || []);
+        setActiveProvider(data.activeProvider);
+        setProviderEnabled(data.enabled);
+        
+        console.log('[AiChat] After setState - activeProvider:', data.activeProvider, 'enabled:', data.enabled);
+        
+        if (data.activeProvider && data.enabled) {
+          console.log('[AiChat] Fetching models for provider:', data.activeProvider);
+          
+          if (data.activeProvider === 'openrouter') {
+            const modelsRes = await window.electronAPI.aiGetOpenRouterModels();
+            console.log('[AiChat] OpenRouter models result:', modelsRes.success, modelsRes.models?.length);
+            if (modelsRes.success && modelsRes.models) {
+              setOpenRouterModels(modelsRes.models);
+              setSelectedModel(data.activeModel || modelsRes.models[0]?.id);
+              console.log('[AiChat] Set openRouterModels:', modelsRes.models.length);
+            } else {
+              console.log('[AiChat] Failed to get models:', modelsRes.error);
+              setSelectedModel(data.activeModel);
+            }
+          } else {
+            const provider = data.providers?.find(p => p.id === data.activeProvider);
+            if (provider) {
+              setProviderModels(provider.models || []);
+              setSelectedModel(data.activeModel || provider.models[0]);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[AiChat] Error:', e);
+      }
+    };
+    
+    fetchProviders();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const offProviderToken = window.electronAPI.onAiProviderToken?.((text) => {
+      setAiStreamedTokens(n => n + 1);
+      setAiChat(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.streaming) {
+          return [...prev.slice(0, -1), { role: 'bot', text: (last.text || '') + text, streaming: true }];
+        }
+        return [...prev, { role: 'bot', text, streaming: true, isProvider: true }];
+      });
+    }) ?? (() => {});
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const offProviderDone = window.electronAPI.onAiProviderDone?.(() => {
+      pipelineResultRef.current = 'success';
+      setAiLoading(false);
+      setAiStreamedTokens(0);
+      setProviderLoading(false);
+      setAiChat(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, streaming: false } : m));
+    }) ?? (() => {});
+
+    const offProviderError = window.electronAPI.onAiProviderError?.((msg) => {
+      pipelineResultRef.current = 'error';
+      setAiLoading(false);
+      setProviderLoading(false);
+      setAiStreamedTokens(0);
+      setAiChat(prev => [...prev, { role: 'bot', text: `Ошибка: ${msg}`, isProvider: true }]);
+    }) ?? (() => {});
+
+    return () => { offProviderToken(); offProviderDone(); offProviderError(); };
+  }, []);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (isElectron && activeProvider === 'openrouter' && openRouterModels.length > 0) {
+      console.log('[AiChat] OpenRouter models ARE available:', openRouterModels.length);
+    }
+  }, [activeProvider, providerEnabled, openRouterModels]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    console.log('[AiChat] Debug - providerEnabled:', providerEnabled, 'activeProvider:', activeProvider, 'openRouterModels:', openRouterModels.length);
+  }, [activeProvider, providerEnabled, openRouterModels]);
+
+  const handleSaveApiKey = async () => {
+    if (!isElectron || !apiKeyInput.trim()) return;
+    setProviderLoading(true);
+    const res = await window.electronAPI.aiSetApiKey(apiKeyInput.trim());
+    setProviderLoading(false);
+    if (res.success && res.provider) {
+      setActiveProvider(res.provider);
+      
+      // If OpenRouter, fetch real models
+      if (res.provider === 'openrouter') {
+        setOpenRouterModels([]);
+        setSelectedModel('');
+        const modelsRes = await window.electronAPI.aiGetOpenRouterModels();
+        if (modelsRes.success && modelsRes.models) {
+          setOpenRouterModels(modelsRes.models);
+          if (modelsRes.models.length > 0) {
+            setSelectedModel(modelsRes.models[0].id);
+          }
+        }
+      } else {
+        const p = aiProviders.find(p => p.id === res.provider);
+        if (p) {
+          setProviderModels(p.models || []);
+          setSelectedModel(p.models?.[0] || '');
+        }
+      }
+      
+      setProviderEnabled(true);
+      setAiLoaded(true);
+      setShowApiKeyInput(false);
+      setApiKeyInput('');
+      const data = await window.electronAPI.aiGetProviders();
+      setAiProviders(data.providers || []);
+    } else {
+      alert(res.error || 'Ошибка сохранения ключа');
+    }
+  };
+
+  const handleSelectProvider = async (providerId) => {
+    if (!isElectron) return;
+    const provider = aiProviders.find(p => p.id === providerId);
+    if (!provider) return;
+    
+    if (provider.hasApiKey) {
+      await window.electronAPI.aiSetProvider(providerId);
+      setActiveProvider(providerId);
+      setProviderModels(provider.models || []);
+      
+      // If OpenRouter, fetch real models
+      if (providerId === 'openrouter') {
+        setSelectedModel('');
+        setOpenRouterModels([]);
+        const result = await window.electronAPI.aiGetOpenRouterModels();
+        if (result.success && result.models) {
+          setOpenRouterModels(result.models);
+          if (result.models.length > 0) {
+            setSelectedModel(result.models[0].id);
+          }
+        }
+      } else {
+        setSelectedModel(provider.models?.[0] || '');
+      }
+      
+      setProviderEnabled(true);
+      setAiLoaded(true);
+      return;
+    }
+    
+    setActiveProvider(providerId);
+    setShowApiKeyInput(true);
+  };
 
   const handleLoadModel = async () => {
     if (!isElectron) return;
@@ -525,8 +707,35 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
     return pageContents.length > 0 ? pageContents.join('\n\n---\n\n') : null;
   };
 
+  // Helper: load URL content for Research Mode
+  const handleLoadUrl = async (url) => {
+    if (!url || !isElectron) return;
+    setAiLoading(true);
+    setAiChat(prev => [...prev, { role: 'status', text: `Загружаю: ${url}...` }]);
+    
+    try {
+      const res = await window.electronAPI.aiFetchUrl(url);
+      setAiChat(prev => prev.filter(m => m.role !== 'status'));
+      
+      if (res?.success && res.content) {
+        const domain = new URL(url).hostname.replace(/^www\./, '');
+        setAiChat(prev => [...prev, { 
+          role: 'bot', 
+          text: `📄 **Загружено с ${domain}**\n\n${res.content.slice(0, 3000)}${res.content.length > 3000 ? '\n\n_(контент обрезан)_' : ''}`,
+          isServerLog: false
+        }]);
+      } else {
+        setAiChat(prev => [...prev, { role: 'bot', text: `Ошибка загрузки: ${res?.error || 'Неизвестная ошибка'}` }]);
+      }
+    } catch (e) {
+      setAiChat(prev => prev.filter(m => m.role !== 'status'));
+      setAiChat(prev => [...prev, { role: 'bot', text: `Ошибка: ${e.message}` }]);
+    }
+    setAiLoading(false);
+  };
+
   const sendMessage = async () => {
-    const effectivelyLoaded = aiLoaded || (ensembleMode && ensembleModels.length > 0);
+    const effectivelyLoaded = aiLoaded || (ensembleMode && ensembleModels.length > 0) || (providerEnabled && activeProvider);
     if (!aiInput.trim() || !effectivelyLoaded || aiLoading) return;
     const text = aiInput.trim();
     setAiInput('');
@@ -536,6 +745,26 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
 
     setAiChat(prev => [...prev, { role: 'user', text }]);
     setAiLoading(true);
+
+    // ── External Provider Mode ───────────────────────────────────────────
+    if (providerEnabled && activeProvider && isElectron) {
+      initPipeline([{ id: 'provider', label: `${aiProviders.find(p => p.id === activeProvider)?.name || 'Provider'}`, type: 'generate', status: 'active' }]);
+      addStatus(`Отправка в ${aiProviders.find(p => p.id === activeProvider)?.name}...`);
+      setProviderLoading(true);
+      
+      const result = await window.electronAPI.aiChatWithProvider(text, selectedModel, {
+        temperature, maxTokens: 4096
+      }).catch(() => ({ success: false, error: 'Ошибка запроса к провайдеру' }));
+      
+      setProviderLoading(false);
+      removeStatus();
+      if (!result?.success) {
+        pipelineResultRef.current = 'error';
+        setAiLoading(false);
+        setAiChat(prev => [...prev, { role: 'bot', text: `Ошибка: ${result?.error || ''}`, isProvider: true }]);
+      }
+      return;
+    }
 
     if (ensembleMode && ensembleModels.length > 0 && isElectron) {
       // ── Режим ансамбля ────────────────────────────────────────────
@@ -560,6 +789,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
         pipelineResultRef.current = 'success';
       }
 
+    /* // DISABLED: deepThinkMode отключён
     } else if (deepThinkMode && isElectron) {
       // ── Init pipeline ─────────────────────────────────────────────
       const dtStages = [{ id: 'think', label: 'Анализ задачи', type: 'think', status: 'active' }];
@@ -630,6 +860,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
       finalPrompt += `\n\nДай подробный структурированный ответ строго по плану выше. Каждый пункт плана — отдельный раздел. Отвечай на русском языке, чётко и по существу.`;
 
       window.electronAPI.aiChat(finalPrompt).catch(() => {});
+    */ // КОНЕЦ DISABLED deepThinkMode
 
     } else if (searchMode && isElectron) {
       // ── Только поиск + чтение страниц ────────────────────────────
@@ -670,6 +901,90 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
         removeStatus();
         window.electronAPI.aiChat(text).catch(() => {});
       }
+
+    } else if (researchMode && isElectron) {
+      // ── Research Mode ──────────────────────────────────────────────
+      const stages = [];
+      
+      if (wikiSearch) {
+        stages.push({ id: 'wiki', label: 'Wikipedia', type: 'wiki', status: 'pending' });
+      }
+      stages.push({ id: 'think', label: 'Мышление', type: 'think', status: 'pending' });
+      if (chainOfThought) {
+        stages.push({ id: 'cot', label: 'Цепочка', type: 'cot', status: 'pending' });
+      }
+      if (selfCorrection) {
+        stages.push({ id: 'check', label: 'Проверка', type: 'check', status: 'pending' });
+      }
+      stages.push({ id: 'generate', label: 'Ответ', type: 'generate', status: 'pending' });
+      
+      initPipeline(stages);
+
+      let wikiResults = null;
+      let pageContent = null;
+      
+      // Build context from Wikipedia
+      if (wikiSearch) {
+        setPipelineStageStatus('wiki', 'active');
+        addStatus('Ищу в Wikipedia...');
+        
+        const wikiSearchRes = await window.electronAPI.aiWikiSearch(text).catch(() => null);
+        if (wikiSearchRes?.success && wikiSearchRes.results?.length > 0) {
+          wikiResults = wikiSearchRes.results;
+          setPipelineStageStatus('wiki', 'done');
+          
+          // Fetch first page content
+          const firstResult = wikiResults[0];
+          const pageRes = await window.electronAPI.aiWikiPage(firstResult.title).catch(() => null);
+          if (pageRes?.success && pageRes.content) {
+            pageContent = pageRes.content;
+          }
+        } else {
+          setPipelineStageStatus('wiki', 'done');
+        }
+        removeStatus();
+      }
+      
+      if (cancelledRef.current) return;
+
+      // Build research prompt
+      let prompt = `Вопрос: ${text}\n\n`;
+      
+      if (wikiResults && wikiResults.length > 0) {
+        prompt += `Из Wikipedia:\n`;
+        wikiResults.forEach((r, i) => {
+          prompt += `${i + 1}. ${r.title}: ${r.snippet || 'Нет описания'}\n`;
+        });
+        prompt += `\nИсточник: ${wikiResults[0].url}\n\n`;
+      }
+      
+      if (pageContent) {
+        prompt += `Содержимое статьи "${wikiResults[0].title}":\n${pageContent}\n\n`;
+      }
+      
+      if (chainOfThought) {
+        prompt += `Перед ответом размышляй вслух:\n`;
+        prompt += `1) Что я точно знаю по этому вопросу?\n`;
+        prompt += `2) Что мне нужно уточнить или проверить?\n`;
+        prompt += `3) Какие есть альтернативные точки зрения?\n`;
+        prompt += `4) Какой вывод можно сделать?\n\n`;
+        prompt += `Затем дай финальный ответ.\n`;
+      }
+      
+      if (selfCorrection) {
+        prompt += `После первого ответа проверь себя:\n`;
+        prompt += `- Есть ли ошибки или неточности?\n`;
+        prompt += `- Не упустил ли я важные аспекты?\n`;
+        prompt += `- Можно ли улучшить ясность?\n`;
+        prompt += `Если нашёл проблемы — исправь их.\n\n`;
+      }
+      
+      prompt += `Отвечай на русском языке.`;
+
+      setPipelineStageStatus('think', 'active');
+      addStatus('Размышляю...');
+      
+      window.electronAPI.aiChat(prompt).catch(() => {});
 
     } else {
       // ── Обычный режим ─────────────────────────────────────────────
@@ -772,15 +1087,137 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
         {/* Model status */}
         <div style={{
           borderRadius: 10, padding: '11px 13px',
-          background: aiLoaded ? '#f0fdf4' : '#f8fafc',
-          border: `1px solid ${aiLoaded ? '#bbf7d0' : '#e2e8f0'}`
+          background: (aiLoaded || providerEnabled) ? '#f0fdf4' : '#f8fafc',
+          border: `1px solid ${(aiLoaded || providerEnabled) ? '#bbf7d0' : '#e2e8f0'}`
         }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: aiLoaded ? '#166534' : '#64748b', marginBottom: 2 }}>
-            {aiLoaded ? `${aiModel?.name}` : aiLoading ? 'Загрузка...' : 'Модель не выбрана'}
+          <div style={{ fontSize: 12, fontWeight: 700, color: (aiLoaded || providerEnabled) ? '#166534' : '#64748b', marginBottom: 2 }}>
+            {(aiLoaded || providerEnabled) 
+              ? (providerEnabled && activeProvider 
+                  ? `${aiProviders.find(p => p.id === activeProvider)?.name || 'AI Provider'} · ${selectedModel}`
+                  : `${aiModel?.name}`)
+              : aiLoading ? 'Загрузка...' : 'Модель не выбрана'}
           </div>
-          <div style={{ fontSize: 11, color: aiLoaded ? '#15803d' : '#94a3b8' }}>
-            {aiLoaded ? 'Готов к работе' : aiLoading ? 'Подождите...' : 'Выберите .gguf файл'}
+          <div style={{ fontSize: 11, color: (aiLoaded || providerEnabled) ? '#15803d' : '#94a3b8' }}>
+            {(aiLoaded || providerEnabled) ? (providerEnabled ? `Провайдер: ${activeProvider}` : 'Готов к работе') : aiLoading ? 'Подождите...' : 'Выберите .gguf файл'}
           </div>
+        </div>
+
+        {/* ── External AI Providers ───────────────────────────────────────────── */}
+        <div style={{ borderRadius: 10, border: `1px solid ${providerEnabled ? '#7c3aed' : '#e2e8f0'}`, padding: '10px 12px', background: providerEnabled ? '#faf5ff' : '#f8fafc' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 8 }}>Внешние провайдеры</div>
+          
+          {showApiKeyInput ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input
+                type="password"
+                placeholder="Вставьте API ключ (определится автоматически)..."
+                value={apiKeyInput}
+                onChange={e => setApiKeyInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSaveApiKey(); }}
+                style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 11, outline: 'none', boxSizing: 'border-box' }}
+              />
+              {apiKeyInput.trim() && (
+                <div style={{ fontSize: 10, color: '#64748b', padding: '4px 8px', background: '#f8fafc', borderRadius: 4 }}>
+                  Ключ будет определён автоматически по префиксу
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={handleSaveApiKey}
+                  disabled={providerLoading || !apiKeyInput.trim()}
+                  style={{ flex: 1, padding: '5px 10px', borderRadius: 6, border: 'none', background: providerLoading ? '#e2e8f0' : '#7c3aed', color: 'white', fontSize: 11, fontWeight: 600, cursor: providerLoading ? 'not-allowed' : 'pointer' }}
+                >
+                  {providerLoading ? 'Сохранение...' : 'Сохранить и подключить'}
+                </button>
+                <button
+                  onClick={() => { setShowApiKeyInput(false); setApiKeyInput(''); }}
+                  style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: 11, cursor: 'pointer' }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>
+                Вставьте API ключ — провайдер определится автоматически
+              </div>
+              <button
+                onClick={() => setShowApiKeyInput(true)}
+                disabled={aiLoading}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  padding: '10px 14px', borderRadius: 7, border: `1px dashed ${providerEnabled ? '#7c3aed' : '#cbd5e1'}`,
+                  background: providerEnabled ? '#f5f3ff' : '#f8fafc', color: providerEnabled ? '#7c3aed' : '#64748b',
+                  fontSize: 12, fontWeight: 600, cursor: aiLoading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.15s'
+                }}
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                </svg>
+                {providerEnabled ? `Подключено: ${aiProviders.find(p => p.id === activeProvider)?.name}` : 'Добавить API ключ'}
+              </button>
+              {aiProviders.map(provider => (
+                <button
+                  key={provider.id}
+                  onClick={() => handleSelectProvider(provider.id)}
+                  disabled={aiLoading}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '7px 10px', borderRadius: 7, border: `1px solid ${activeProvider === provider.id ? '#7c3aed' : '#e2e8f0'}`,
+                    background: activeProvider === provider.id ? '#f5f3ff' : 'white', color: activeProvider === provider.id ? '#7c3aed' : '#475569',
+                    fontSize: 11, fontWeight: 600, cursor: aiLoading ? 'not-allowed' : 'pointer',
+                    textAlign: 'left', transition: 'all 0.15s'
+                  }}
+                >
+                  <span>{provider.name}</span>
+                  {provider.hasApiKey && (
+                    <span style={{ fontSize: 9, color: '#22c55e', background: '#dcfce7', padding: '2px 6px', borderRadius: 4 }}>✓</span>
+                  )}
+                </button>
+              ))}
+              
+              {(providerEnabled && activeProvider === 'openrouter') ? (
+                <div style={{ marginTop: 8, padding: 8, background: openRouterModels.length > 0 ? '#f0f9ff' : '#fef3c7', borderRadius: 6, border: `1px solid ${openRouterModels.length > 0 ? '#bae6fd' : '#fcd34d'}` }}>
+                  <div style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>DEBUG: {openRouterModels.length} models, providerEnabled={String(providerEnabled)}, activeProvider={activeProvider}</div>
+                  <label style={{ fontSize: 10, fontWeight: 600, color: openRouterModels.length > 0 ? '#0369a1' : '#92400e', display: 'block', marginBottom: 4 }}>
+                    {openRouterModels.length > 0 ? `OpenRouter • ${openRouterModels.length} моделей` : 'Загрузка моделей OpenRouter...'}
+                  </label>
+                  {openRouterModels.length > 0 ? (
+                    <select
+                      value={selectedModel}
+                      onChange={e => {
+                        console.log('[AiChat] Model changed to:', e.target.value);
+                        setSelectedModel(e.target.value);
+                        if (isElectron) window.localStorage.setItem('intra-ai-model', e.target.value);
+                      }}
+                      style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 6, border: '1px solid #7dd3fc', background: 'white', cursor: 'pointer' }}
+                    >
+                      {openRouterModels.map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div style={{ fontSize: 11, color: '#92400e', padding: '4px 0' }}>Подождите, загружаем доступные модели...</div>
+                  )}
+                </div>
+              ) : providerEnabled && providerModels.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 10, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 4 }}>Модель</label>
+                  <select
+                    value={selectedModel}
+                    onChange={e => handleModelChange(e.target.value)}
+                    style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 6, border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer' }}
+                  >
+                    {providerModels.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Context size select */}
@@ -1027,6 +1464,25 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              onClick={() => { setShowHistoryPanel(v => !v); loadChatHistoryList(); }}
+              title="История чатов"
+              style={{
+                padding: '4px 8px', borderRadius: 6, border: '1px solid #e2e8f0',
+                background: showHistoryPanel ? '#eff6ff' : 'white', color: '#64748b',
+                fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+              }}
+            >
+              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              {currentSessionId ? 'Сессия' : 'История'}
+            </button>
+            {currentSessionId && (
+              <span style={{ fontSize: 12, color: '#64748b', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {chatSessions.find(s => s.id === currentSessionId)?.title || 'Новая сессия'}
+              </span>
+            )}
             <span style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>
               {aiLoaded ? (aiModel?.name || 'AI Chat') : 'AI Чат'}
             </span>
@@ -1035,6 +1491,22 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                 fontSize: 10, color: '#16a34a', background: '#dcfce7',
                 padding: '2px 8px', borderRadius: 999, fontWeight: 700, letterSpacing: 0.3
               }}>ONLINE</span>
+            )}
+            {aiLoaded && (
+              <button
+                onClick={() => setResearchMode(v => !v)}
+                style={{
+                  padding: '4px 10px', borderRadius: 7, border: `1px solid ${researchMode ? '#7c3aed' : '#e2e8f0'}`,
+                  background: researchMode ? '#f5f3ff' : 'white', color: researchMode ? '#7c3aed' : '#64748b',
+                  fontSize: 11, fontWeight: researchMode ? 700 : 500, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 5
+                }}
+              >
+                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+                </svg>
+                Research
+              </button>
             )}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -1073,39 +1545,13 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                 Процесс
               </button>
             )}
-            <button
-              title={aiShowHistory ? 'Показать чат' : 'История чатов'}
-              onClick={() => setAiShowHistory(v => !v)}
-              style={{
-                padding: '5px 11px', borderRadius: 7, border: `1px solid ${aiShowHistory ? '#bfdbfe' : '#e2e8f0'}`,
-                background: aiShowHistory ? '#eff6ff' : '#f8fafc', color: aiShowHistory ? '#2563eb' : '#64748b',
-                fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5
-              }}
-            >
-              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              {aiShowHistory ? 'Чат' : `История${aiChatHistory.length > 0 ? ` (${aiChatHistory.length})` : ''}`}
-            </button>
-            {aiChat.length > 0 && !aiShowHistory && (
+            {aiChat.length > 0 && (
               <button
-                title="Новый чат (сохранить текущий)"
+                title="Очистить чат"
                 onClick={() => {
-                  const userMessages = aiChat.filter(m => m.role === 'user');
-                  if (userMessages.length > 0) {
-                    const conversation = {
-                      id: Date.now(),
-                      timestamp: new Date().toISOString(),
-                      messages: aiChat.filter(m => !m.isServerLog && !m.role === 'status'),
-                      source: 'aichat'
-                    };
-                    setAiChatHistory(hist => {
-                      const newHist = [conversation, ...hist].slice(0, 50);
-                      localStorage.setItem('intra-ai-chat-history-aichat', JSON.stringify(newHist));
-                      return newHist;
-                    });
-                  }
                   setAiChat([]); setPipelineStages([]); window.electronAPI?.aiClearHistory?.();
+                  setCurrentSessionId(null);
+                  createNewSession();
                 }}
                 style={{
                   padding: '5px 11px', borderRadius: 7, border: '1px solid #e2e8f0',
@@ -1118,11 +1564,149 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                 <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                   <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
                 </svg>
-                Новый
+                Очистить
               </button>
             )}
           </div>
         </div>
+
+        {/* Research Mode Panel */}
+        {researchMode && (
+          <div style={{
+            padding: '12px 20px', background: '#f8f5ff', borderBottom: '1px solid #e9d5ff',
+            display: 'flex', flexDirection: 'column', gap: 10
+          }}>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b', cursor: 'pointer' }}>
+                <input type="checkbox" checked={wikiSearch} onChange={e => setWikiSearch(e.target.checked)} />
+                Wikipedia
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b', cursor: 'pointer' }}>
+                <input type="checkbox" checked={chainOfThought} onChange={e => setChainOfThought(e.target.checked)} />
+                Цепочка мыслей
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b', cursor: 'pointer' }}>
+                <input type="checkbox" checked={selfCorrection} onChange={e => setSelfCorrection(e.target.checked)} />
+                Самопроверка
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="text"
+                placeholder="URL страницы для загрузки..."
+                value={urlInput}
+                onChange={e => setUrlInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && urlInput.trim()) {
+                    handleLoadUrl(urlInput.trim());
+                    setUrlInput('');
+                  }
+                }}
+                style={{
+                  flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0',
+                  fontSize: 12, outline: 'none'
+                }}
+              />
+              <button
+                onClick={() => { if (urlInput.trim()) { handleLoadUrl(urlInput.trim()); setUrlInput(''); } }}
+                disabled={!urlInput.trim()}
+                style={{
+                  padding: '6px 12px', borderRadius: 6, border: 'none', background: '#7c3aed', color: 'white',
+                  fontSize: 12, cursor: urlInput.trim() ? 'pointer' : 'not-allowed', opacity: urlInput.trim() ? 1 : 0.5
+                }}
+              >
+                Загрузить
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Chat History Panel */}
+        {showHistoryPanel && (
+          <div style={{
+            padding: '12px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0',
+            display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 200, overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>История чатов</span>
+              <button
+                onClick={createNewSession}
+                style={{
+                  padding: '4px 10px', borderRadius: 6, border: 'none', background: '#2563eb', color: 'white',
+                  fontSize: 11, cursor: 'pointer'
+                }}
+              >
+                + Новый чат
+              </button>
+            </div>
+            {chatSessions.length === 0 ? (
+              <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: 10 }}>Нет сохранённых чатов</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {chatSessions.slice(0, 10).map(session => (
+                  <div
+                    key={session.id}
+                    onClick={() => { loadSession(session.id); setShowHistoryPanel(false); }}
+                    style={{
+                      padding: '8px 10px', borderRadius: 7, border: `1px solid ${currentSessionId === session.id ? '#2563eb' : '#e2e8f0'}`,
+                      background: currentSessionId === session.id ? '#eff6ff' : 'white', cursor: 'pointer',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {editingSessionTitle === session.id ? (
+                        <input
+                          type="text"
+                          value={sessionTitleInput}
+                          onChange={e => setSessionTitleInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') saveRenameSession(); if (e.key === 'Escape') setEditingSessionTitle(null); }}
+                          onBlur={saveRenameSession}
+                          onClick={e => e.stopPropagation()}
+                          autoFocus
+                          style={{ width: '100%', padding: '2px 4px', borderRadius: 4, border: '1px solid #2563eb', fontSize: 12 }}
+                        />
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {session.title}
+                          </div>
+                          <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                            {session.messageCount} сообщ. · {new Date(session.updatedAt).toLocaleDateString('ru-RU')}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
+                      <button
+                        onClick={(e) => startRenameSession(session, e)}
+                        title="Переименовать"
+                        style={{ padding: 4, background: 'none', border: 'none', cursor: 'pointer', borderRadius: 4, display: 'flex', alignItems: 'center' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                      >
+                        <svg width="14" height="14" fill="none" stroke="#64748b" viewBox="0 0 24 24" strokeWidth="2">
+                          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => deleteSession(session.id, e)}
+                        title="Удалить"
+                        style={{ padding: 4, background: 'none', border: 'none', cursor: 'pointer', borderRadius: 4, display: 'flex', alignItems: 'center' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                      >
+                        <svg width="14" height="14" fill="none" stroke="#ef4444" viewBox="0 0 24 24" strokeWidth="2">
+                          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Pipeline animation */}
         <ProcessingPipeline
@@ -1136,36 +1720,8 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           flex: 1, overflowY: 'auto', padding: '24px 28px',
           display: 'flex', flexDirection: 'column', gap: 18
         }}>
-          {/* History view */}
-          {aiShowHistory && (
-            aiChatHistory.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
-                <div style={{ fontSize: 14, marginBottom: 8 }}>История чатов пуста</div>
-                <div style={{ fontSize: 12 }}>Начните диалог, чтобы он сохранился здесь</div>
-              </div>
-            ) : (
-              aiChatHistory.map((conv) => (
-                <div key={conv.id}
-                  onClick={() => { setAiChat(conv.messages); setAiShowHistory(false); }}
-                  style={{ padding: '14px 16px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0', cursor: 'pointer' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#eff6ff'; e.currentTarget.style.borderColor = '#bfdbfe'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
-                >
-                  <div style={{ color: '#64748b', marginBottom: 8, fontSize: 11 }}>
-                    {new Date(conv.timestamp).toLocaleString('ru-RU')}
-                  </div>
-                  <div style={{ color: '#374151', fontSize: 13, lineHeight: 1.5 }}>
-                    {conv.messages[0]?.text?.slice(0, 150)}{conv.messages[0]?.text?.length > 150 ? '...' : ''}
-                  </div>
-                  <div style={{ color: '#94a3b8', marginTop: 8, fontSize: 11 }}>
-                    {conv.messages.length} сообщений
-                  </div>
-                </div>
-              ))
-            )
-          )}
           {/* Empty state */}
-          {!aiShowHistory && aiChat.length === 0 && (
+          {aiChat.length === 0 && (
             <div style={{
               flex: 1, display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center', padding: '60px 0', color: '#94a3b8'
@@ -1204,7 +1760,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           )}
 
           {/* Message bubbles */}
-          {!aiShowHistory && aiChat.map((msg, i) => {
+          {aiChat.map((msg, i) => {
             // ── Временный статус-индикатор ──────────────────────────────
             if (msg.role === 'status') {
               return (
@@ -1220,27 +1776,6 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                       animation: 'aiSearchSpin 0.7s linear infinite', flexShrink: 0
                     }}/>
                     <span style={{ fontSize: 11, color: '#6d28d9', fontWeight: 600 }}>{msg.text}</span>
-                  </div>
-                </div>
-              );
-            }
-
-            // ── Блок мышления (план) ─────────────────────────────────────
-            if (msg.role === 'thinking') {
-              return (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                  <div style={{
-                    width: 32, height: 32, borderRadius: 9, flexShrink: 0,
-                    background: 'linear-gradient(135deg,#7c3aed,#5b21b6)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}>
-                    <svg width="16" height="16" fill="none" stroke="#e9d5ff" viewBox="0 0 24 24" strokeWidth="1.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-                    </svg>
-                  </div>
-                  <div style={{ flex: 1, padding: '10px 14px', borderRadius: '0 14px 14px 14px', background: '#f5f3ff', border: '1px solid #e9d5ff' }}>
-                    <div style={{ fontSize: 10, color: '#7c3aed', fontWeight: 700, marginBottom: 6 }}>Мышление:</div>
-                    <MessageText text={msg.text} />
                   </div>
                 </div>
               );
@@ -1299,7 +1834,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
               </div>
             );
           })}
-          { !aiShowHistory && (aiChat.length > 0 || aiLoading) && (
+          {(aiChat.length > 0 || aiLoading) && (
             <div style={{ height: 60 }} />
           )}
 
@@ -1398,30 +1933,6 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
             </button>
             )}
 
-            {/* Deep Think toggle — hidden in ensemble mode */}
-            {!ensembleMode && (
-            <button
-              onClick={() => setDeepThinkMode(v => !v)}
-              disabled={!aiLoaded || aiLoading}
-              title={deepThinkMode ? 'Глубокое мышление включено' : 'Включить структурированное мышление'}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '5px 11px', borderRadius: 8,
-                border: `1px solid ${deepThinkMode ? '#7c3aed' : '#e2e8f0'}`,
-                background: deepThinkMode ? '#7c3aed' : '#f8fafc',
-                color: deepThinkMode ? 'white' : '#64748b',
-                fontSize: 11, fontWeight: 600,
-                cursor: aiLoaded && !aiLoading ? 'pointer' : 'not-allowed',
-                opacity: aiLoaded && !aiLoading ? 1 : 0.5, transition: 'all 0.15s', flexShrink: 0
-              }}
-            >
-              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-              </svg>
-              Глубокое мышление
-            </button>
-            )}
-
             {/* Ensemble mode badge */}
             {ensembleMode && ensembleModels.length > 0 && (
               <span style={{
@@ -1438,13 +1949,9 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
             )}
 
             {/* Active mode hints */}
-            {(searchMode || deepThinkMode) && !ensembleMode && (
+            {searchMode && !ensembleMode && (
               <span style={{ fontSize: 10, color: '#64748b', lineHeight: 1.4 }}>
-                {deepThinkMode && searchMode
-                  ? 'Поиск + чтение страниц + структурированный анализ'
-                  : deepThinkMode
-                  ? 'Анализ → план → структурированный ответ'
-                  : 'Поиск в интернете + чтение страниц'}
+                {'Поиск в интернете + чтение страниц'}
               </span>
             )}
           </div>
@@ -1468,12 +1975,14 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
                 }}
                 placeholder={
-                  !(aiLoaded || (ensembleMode && ensembleModels.length > 0)) ? 'Загрузите модель или выберите папку ансамбля...' :
+                  !(aiLoaded || (ensembleMode && ensembleModels.length > 0) || (providerEnabled && activeProvider)) 
+                    ? 'Загрузите модель, выберите провайдера или папку ансамбля...' :
+                  providerEnabled ? `Введите запрос — ${aiProviders.find(p => p.id === activeProvider)?.name} обработает его...` :
                   ensembleMode ? 'Введите запрос — все модели ансамбля обработают его...' :
                   searchMode ? 'Введите запрос — ИИ найдёт информацию в интернете и ответит...' :
                   'Введите сообщение... (Enter — отправить, Shift+Enter — новая строка)'
                 }
-                disabled={!(aiLoaded || (ensembleMode && ensembleModels.length > 0)) || aiLoading}
+                disabled={!(aiLoaded || (ensembleMode && ensembleModels.length > 0) || (providerEnabled && activeProvider)) || aiLoading}
                 rows={1}
                 style={{
                   width: '100%', padding: '10px 14px', border: 'none', outline: 'none',
@@ -1510,28 +2019,28 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
                 disabled={!(aiLoaded || (ensembleMode && ensembleModels.length > 0)) || !aiInput.trim()}
                 style={{
                   width: 44, height: 44, borderRadius: 11, border: 'none', flexShrink: 0,
-                  background: (aiLoaded || (ensembleMode && ensembleModels.length > 0)) && aiInput.trim()
-                    ? (ensembleMode ? '#7c3aed' : deepThinkMode ? '#7c3aed' : '#2563eb')
+                  background: (aiLoaded || (ensembleMode && ensembleModels.length > 0) || (providerEnabled && activeProvider)) && aiInput.trim()
+                    ? (providerEnabled ? '#7c3aed' : ensembleMode ? '#7c3aed' : '#2563eb')
                     : '#e2e8f0',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: (aiLoaded || (ensembleMode && ensembleModels.length > 0)) && aiInput.trim() ? 'pointer' : 'not-allowed',
+                  cursor: (aiLoaded || (ensembleMode && ensembleModels.length > 0) || (providerEnabled && activeProvider)) && aiInput.trim() ? 'pointer' : 'not-allowed',
                   transition: 'all 0.15s',
-                  boxShadow: (aiLoaded || (ensembleMode && ensembleModels.length > 0)) && aiInput.trim()
-                    ? `0 4px 12px ${(ensembleMode || deepThinkMode) ? 'rgba(124,58,237,0.35)' : 'rgba(37,99,235,0.35)'}`
+                  boxShadow: (aiLoaded || (ensembleMode && ensembleModels.length > 0) || (providerEnabled && activeProvider)) && aiInput.trim()
+                    ? `0 4px 12px ${providerEnabled ? 'rgba(124,58,237,0.35)' : ensembleMode ? 'rgba(124,58,237,0.35)' : 'rgba(37,99,235,0.35)'}`
                     : 'none'
                 }}
               >
-                {ensembleMode ? (
+                {providerEnabled ? (
+                  <svg width="14" height="14" fill="none" stroke={(aiLoaded || (providerEnabled && activeProvider)) && aiInput.trim() ? 'white' : '#94a3b8'} viewBox="0 0 24 24" strokeWidth="2.5">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                  </svg>
+                ) : ensembleMode ? (
                   <svg width="14" height="14" fill="none" stroke={(aiLoaded || (ensembleMode && ensembleModels.length > 0)) && aiInput.trim() ? 'white' : '#94a3b8'} viewBox="0 0 24 24" strokeWidth="2.5">
                     <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M12 2v2M12 20v2M2 12h2M20 12h2M16.95 16.95l1.41 1.41M5.05 16.95l-1.41 1.41"/>
                   </svg>
-                ) : searchMode && !deepThinkMode ? (
+                ) : searchMode ? (
                   <svg width="16" height="16" fill="none" stroke={aiLoaded && aiInput.trim() ? 'white' : '#94a3b8'} viewBox="0 0 24 24" strokeWidth="2.5">
                     <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-                  </svg>
-                ) : deepThinkMode ? (
-                  <svg width="15" height="15" fill="none" stroke={aiLoaded && aiInput.trim() ? 'white' : '#94a3b8'} viewBox="0 0 24 24" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
                   </svg>
                 ) : (
                   <svg width="18" height="18" fill="none" stroke={aiLoaded && aiInput.trim() ? 'white' : '#94a3b8'} viewBox="0 0 24 24" strokeWidth="2">
@@ -1542,12 +2051,10 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
             )}
           </div>
           <div style={{ marginTop: 7, fontSize: 11, color: '#cbd5e1', textAlign: 'center' }}>
-            {ensembleMode
+            {providerEnabled
+              ? `AI Provider · ${aiProviders.find(p => p.id === activeProvider)?.name} · ${selectedModel}`
+              : ensembleMode
               ? `Ансамбль · ${ensembleModels.length} моделей обработают запрос и синтезируют ответ`
-              : deepThinkMode && searchMode
-              ? 'Глубокое мышление + поиск · DuckDuckGo + чтение страниц, ответ локально'
-              : deepThinkMode
-              ? 'Глубокое мышление · Структурированный ответ по плану, всё локально'
               : searchMode
               ? 'Поиск включён · DuckDuckGo + чтение страниц, ответ генерируется локально'
               : 'Все вычисления выполняются локально · Данные не покидают ваше устройство'

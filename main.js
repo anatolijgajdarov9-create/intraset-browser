@@ -98,6 +98,263 @@ let aiTemperature   = 0.7;
 let aiTopP          = 0.9;
 let aiGenerating    = false;
 
+// ─── External AI Provider Configuration ────────────────────────────────────────
+const AI_PROVIDERS = {
+  openai: {
+    name: 'OpenAI',
+    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+    apiUrl: 'https://api.openai.com/v1/chat/completions',
+    keyPrefix: 'sk-',
+    needsModel: true
+  },
+  anthropic: {
+    name: 'Anthropic (Claude)',
+    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
+    apiUrl: 'https://api.anthropic.com/v1/messages',
+    keyPrefix: 'sk-ant-',
+    needsModel: true
+  },
+  google: {
+    name: 'Google Gemini',
+    models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+    apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent',
+    keyPrefix: 'AIza',
+    needsModel: true
+  },
+  openrouter: {
+    name: 'OpenRouter',
+    models: ['openai/gpt-4o', 'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.0-flash', 'meta-llama/llama-3.1-70b-instruct'],
+    apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    keyPrefix: 'sk-or-',
+    needsModel: true
+  }
+};
+
+// Auto-detect provider from API key
+function detectProvider(apiKey) {
+  const key = apiKey.trim();
+  console.log('[AI Provider] Detecting from key:', key.slice(0, 15) + '...');
+  
+  // Check more specific prefixes first (longer = more specific)
+  if (key.startsWith('sk-or-v1-') || key.startsWith('sk-or-')) {
+    console.log('[AI Provider] Detected as openrouter (sk-or-v1-/sk-or-)');
+    return 'openrouter';
+  }
+  if (key.startsWith('sk-ant-')) {
+    console.log('[AI Provider] Detected as anthropic (sk-ant-)');
+    return 'anthropic';
+  }
+  if (key.startsWith('AIza')) {
+    console.log('[AI Provider] Detected as google (AIza)');
+    return 'google';
+  }
+  
+  // Then check shorter prefixes
+  for (const [id, provider] of Object.entries(AI_PROVIDERS)) {
+    if (provider.keyPrefix && key.startsWith(provider.keyPrefix)) {
+      console.log('[AI Provider] Detected by prefix:', id, provider.name);
+      return id;
+    }
+  }
+  
+  // Fallback: check by length/pattern
+  if (key.startsWith('sk-') && key.length >= 48) {
+    // Most likely OpenAI, but could also be other - default to openrouter
+    console.log('[AI Provider] Defaulting to openrouter (generic sk- with 48+ chars)');
+    return 'openrouter';
+  }
+  
+  console.log('[AI Provider] Could not detect, returning null');
+  return null;
+}
+
+let aiProviderConfig = {
+  activeProvider: null,
+  activeModel: null,
+  apiKeys: {},
+  enabled: false
+};
+
+function loadAiProviderConfig() {
+  try {
+    const configPath = path.join(app.getPath('userData'), 'ai-providers.json');
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf-8');
+      console.log('[AI Providers] Raw config file:', raw);
+      const loaded = JSON.parse(raw);
+      
+      // Migration: fix incorrectly saved provider keys
+      if (loaded.apiKeys && loaded.activeProvider) {
+        const currentKey = loaded.apiKeys[loaded.activeProvider];
+        if (currentKey) {
+          const correctProvider = detectProvider(currentKey);
+          if (correctProvider && correctProvider !== loaded.activeProvider) {
+            console.log('[AI Providers] Migrating key from', loaded.activeProvider, 'to', correctProvider);
+            loaded.apiKeys[correctProvider] = currentKey;
+            delete loaded.apiKeys[loaded.activeProvider];
+            loaded.activeProvider = correctProvider;
+            // Also fix activeModel based on new provider
+            if (AI_PROVIDERS[correctProvider]) {
+              loaded.activeModel = AI_PROVIDERS[correctProvider].models[0];
+            }
+          }
+        }
+      }
+      
+      console.log('[AI Providers] Parsed config:', JSON.stringify(loaded));
+      aiProviderConfig = { ...aiProviderConfig, ...loaded };
+      console.log('[AI Providers] Merged, activeProvider:', aiProviderConfig.activeProvider, 'apiKeys:', Object.keys(aiProviderConfig.apiKeys));
+    } else {
+      console.log('[AI Providers] Config file not found');
+    }
+  } catch (e) { console.error('[AI Providers] Load error:', e.message); }
+}
+
+function saveAiProviderConfig() {
+  try {
+    const configPath = path.join(app.getPath('userData'), 'ai-providers.json');
+    fs.writeFileSync(configPath, JSON.stringify(aiProviderConfig, null, 2));
+  } catch (e) { console.error('[AI Providers] Save error:', e.message); }
+}
+
+// ─── AI Chat History Management ────────────────────────────────────────────────
+const AI_HISTORY_DIR = path.join(app.getPath('userData'), 'ai-history');
+const MAX_HISTORY_FILES = 50;
+const MAX_MESSAGES_PER_SESSION = 100;
+const MAX_CHARS_PER_SESSION = 500000;
+
+function ensureHistoryDir() {
+  if (!fs.existsSync(AI_HISTORY_DIR)) {
+    fs.mkdirSync(AI_HISTORY_DIR, { recursive: true });
+  }
+}
+
+function getHistoryFilePath(sessionId) {
+  return path.join(AI_HISTORY_DIR, `${sessionId}.json`);
+}
+
+function listChatSessions() {
+  ensureHistoryDir();
+  try {
+    const files = fs.readdirSync(AI_HISTORY_DIR)
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        const filePath = path.join(AI_HISTORY_DIR, f);
+        const stats = fs.statSync(filePath);
+        try {
+          const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          return {
+            id: f.replace('.json', ''),
+            title: data.title || 'Без названия',
+            preview: data.messages?.[0]?.text?.slice(0, 60) || '',
+            messageCount: data.messages?.length || 0,
+            createdAt: data.createdAt || stats.birthtime.getTime(),
+            updatedAt: data.updatedAt || stats.mtime.getTime(),
+            provider: data.provider || null,
+            model: data.model || null
+          };
+        } catch {
+          return { id: f.replace('.json', ''), title: 'Повреждён', preview: '', messageCount: 0, createdAt: stats.birthtime.getTime(), updatedAt: stats.mtime.getTime() };
+        }
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    
+    // Cleanup old files if over limit
+    if (files.length > MAX_HISTORY_FILES) {
+      const toDelete = files.slice(MAX_HISTORY_FILES);
+      for (const f of toDelete) {
+        try { fs.unlinkSync(path.join(AI_HISTORY_DIR, `${f.id}.json`)); } catch (_) {}
+      }
+    }
+    
+    return files.slice(0, MAX_HISTORY_FILES);
+  } catch (e) {
+    console.error('[AI History] List error:', e.message);
+    return [];
+  }
+}
+
+function saveChatSession(sessionId, messages, title, provider, model) {
+  ensureHistoryDir();
+  
+  // Trim messages if too many
+  let trimmedMessages = messages;
+  let totalChars = messages.reduce((s, m) => s + (m.text?.length || 0), 0);
+  
+  while (trimmedMessages.length > MAX_MESSAGES_PER_SESSION || totalChars > MAX_CHARS_PER_SESSION) {
+    // Remove oldest non-system messages (keep first 2 as context)
+    if (trimmedMessages.length > 4) {
+      trimmedMessages = [trimmedMessages[0], trimmedMessages[1], ...trimmedMessages.slice(2, -2), trimmedMessages[trimmedMessages.length - 1]];
+      totalChars = trimmedMessages.reduce((s, m) => s + (m.text?.length || 0), 0);
+    } else {
+      break;
+    }
+  }
+  
+  const sessionData = {
+    id: sessionId,
+    title: title || `Чат ${new Date().toLocaleDateString('ru-RU')}`,
+    messages: trimmedMessages,
+    provider,
+    model,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  
+  try {
+    fs.writeFileSync(getHistoryFilePath(sessionId), JSON.stringify(sessionData, null, 2));
+    return { success: true };
+  } catch (e) {
+    console.error('[AI History] Save error:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+function loadChatSession(sessionId) {
+  try {
+    const filePath = getHistoryFilePath(sessionId);
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      return { success: true, session: data };
+    }
+    return { success: false, error: 'Сессия не найдена' };
+  } catch (e) {
+    console.error('[AI History] Load error:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+function deleteChatSession(sessionId) {
+  try {
+    const filePath = getHistoryFilePath(sessionId);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    return { success: true };
+  } catch (e) {
+    console.error('[AI History] Delete error:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+function renameChatSession(sessionId, newTitle) {
+  try {
+    const filePath = getHistoryFilePath(sessionId);
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      data.title = newTitle;
+      data.updatedAt = Date.now();
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      return { success: true };
+    }
+    return { success: false, error: 'Сессия не найдена' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+loadAiProviderConfig();
+
 function getFreePort() {
   return new Promise((resolve) => {
     const srv = net.createServer();
@@ -523,6 +780,13 @@ function setupBrowserViewEvents(view, tabId) {
             { label: 'Резюмировать',    action: 'ai-summarize-selection', iconKey: 'ai-summarize', payload: { text: params.selectionText } },
             { label: 'Ключевые тезисы', action: 'ai-theses-selection',    iconKey: 'ai-theses',    payload: { text: params.selectionText } },
             { label: 'Объяснить',       action: 'ai-explain-selection',   iconKey: 'ai-explain',   payload: { text: params.selectionText } },
+            { label: 'Перевести',       action: 'ai-translate-selection', iconKey: 'ai-translate', payload: { text: params.selectionText } },
+            { label: 'Найти информацию', action: 'ai-search-selection',   iconKey: 'ai-search',    payload: { text: params.selectionText } },
+            { label: 'Улучшить стиль',  action: 'ai-improve-selection',  iconKey: 'ai-improve',   payload: { text: params.selectionText } },
+            { label: 'Сократить',       action: 'ai-shorten-selection',   iconKey: 'ai-shorten',   payload: { text: params.selectionText } },
+            { label: 'Расширить',       action: 'ai-expand-selection',    iconKey: 'ai-expand',   payload: { text: params.selectionText } },
+            { label: 'Объяснить код',   action: 'ai-code-selection',     iconKey: 'ai-code',     payload: { text: params.selectionText } },
+            { label: 'Извлечь данные',  action: 'ai-extract-selection',  iconKey: 'ai-extract',  payload: { text: params.selectionText } },
           ]
         },
         { type: 'separator' }
@@ -631,6 +895,17 @@ function createBrowserView(tabId, url, extraPrefs = {}) {
     }
   });
 
+  // Log any errors during page load
+  view.webContents.on('did-fail-load', (_e, errorCode, errorDesc) => {
+    console.log('[BrowserView] Failed to load:', errorCode, errorDesc);
+  });
+  view.webContents.on('render-process-gone', (_e, details) => {
+    console.log('[BrowserView] Render process gone:', details.reason);
+  });
+  view.webContents.on('crashed', () => {
+    console.log('[BrowserView] Renderer crashed');
+  });
+  
   // BrowserView использует системные настройки прокси, которые могут быть недоступны.
   // Принудительно используем прямое соединение для избежания ERR_PROXY_CONNECTION_FAILED
   view.webContents.session.setProxy({ proxyRules: 'direct://' });
@@ -638,7 +913,14 @@ function createBrowserView(tabId, url, extraPrefs = {}) {
   browserViews.set(tabId, view);
   setupBrowserViewEvents(view, tabId);
 
+  // Skip loading for internal URLs (intra://)
+  if (url && url.startsWith('intra://')) {
+    console.log('[BrowserView] Skipping internal URL:', url);
+    return view;
+  }
+  
   if (url && url !== 'intra://home') {
+    console.log('[BrowserView] Loading URL:', url);
     view.webContents.loadURL(url);
   }
 
@@ -1373,7 +1655,65 @@ ipcMain.handle('ai-web-search', async (_event, { query }) => {
 
     // html.duckduckgo.com — POST запрос (надёжнее GET для этого эндпоинта)
     const postBody = `q=${encodeURIComponent(query)}&kl=ru-ru&df=`;
-    doFetch('html.duckduckgo.com', '/html/', 'POST', postBody, 0);
+    
+    // Try multiple search engines as fallback
+    function trySearch(engine, path, method, body) {
+      doFetch(engine, path, method, body, 0);
+    }
+    
+    // Try DuckDuckGo first, then fallback to Bing
+    trySearch('html.duckduckgo.com', '/html/', 'POST', postBody);
+  });
+});
+
+// Fallback search using Bing
+ipcMain.handle('ai-web-search-bing', async (_event, { query }) => {
+  return new Promise((resolve) => {
+    const https = require('https');
+    
+    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=ru`;
+    
+    const req = https.get(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8',
+      },
+      timeout: 15000
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; if (data.length > 500000) req.destroy(); });
+      res.on('end', () => {
+        // Parse Bing results
+        const titles = [];
+        const urls = [];
+        const snippets = [];
+        
+        // Bing: <li class="b_algo"> -> <h2> -> <a href="...">
+        const titleRe = /<li[^>]*class="b_algo"[^>]*>[\s\S]*?<h2[^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([^<]*)</gi;
+        let m;
+        while ((m = titleRe.exec(data)) !== null && urls.length < 5) {
+          urls.push(m[1]);
+          titles.push(m[2].replace(/<[^>]+>/g, '').trim());
+        }
+        
+        // Snippets
+        const snipRe = /<p[^>]*class="b_lineclamp[^"]*"[^>]*>([^<]*)</gi;
+        while ((m = snipRe.exec(data)) !== null && snippets.length < 5) {
+          snippets.push(m[1].trim());
+        }
+        
+        if (urls.length > 0) {
+          const results = titles.map((t, i) => `${i + 1}. ${t}\n${snippets[i] || ''}`).join('\n\n');
+          resolve({ success: true, results, urls });
+        } else {
+          resolve({ success: false, error: 'Результаты не найдены' });
+        }
+      });
+      res.on('error', e => resolve({ success: false, error: e.message }));
+    });
+    req.on('error', e => resolve({ success: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ success: false, error: 'Таймаут поиска' }); });
   });
 });
 
@@ -1574,18 +1914,497 @@ ipcMain.handle('ai-get-page-content', async () => {
   if (!activeTabId) return { success: false, error: 'Нет активной вкладки' };
   const view = browserViews.get(activeTabId);
   if (!view) return { success: false, error: 'Нет открытой веб-страницы' };
+  
+  // Check if page is loading
+  if (view.webContents.isLoading()) {
+    return { success: false, error: 'Страница загружается, подождите...' };
+  }
+  
   try {
-    const content = await view.webContents.executeJavaScript(`
-      (function() {
-        const article = document.querySelector('article, main, [role="main"], .content, #content, .post, .article');
-        const el = article || document.body;
-        return (el.innerText || '').replace(/[ \\t]{2,}/g, ' ').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, 15000);
-      })()
-    `);
+    // Try multiple methods to get content
+    let content = '';
+    
+    // Method 1: executeJavaScript with fallback
+    try {
+      content = await view.webContents.executeJavaScript(`
+        (function() {
+          try {
+            const selectors = [
+              'article', 'main', '[role="main"]', '.content', '#content', 
+              '.post', '.article', '#mw-content-text', '.mw-parser-output',
+              '.vector-sticky-pinned-container', '.entry-content', '.article-body',
+              '#main-content', '.post-content', '.article-content', '.story-body'
+            ];
+            for (const sel of selectors) {
+              const el = document.querySelector(sel);
+              if (el && el.innerText && el.innerText.length > 100) {
+                return (el.innerText || '').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 15000);
+              }
+            }
+            // Fallback to body
+            const el = document.body;
+            return el ? (el.innerText || '').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 15000) : '';
+          } catch(e) {
+            return document.body ? document.body.innerText.slice(0, 15000) : '';
+          }
+        })()
+      `);
+      } catch (jsErr) {
+      // Method 2: Get HTML and parse as fallback
+      try {
+        const html = await view.webContents.executeJavaScript('document.documentElement.outerHTML');
+        // Simple HTML to text conversion
+        content = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 15000);
+      } catch (htmlErr) {
+        console.error('[ai-get-page-content] Both methods failed:', jsErr.message, htmlErr.message);
+        return { success: false, error: 'Страница недоступна для анализа (возможно заблокирована или защищена)' };
+      }
+    }
+    
+    if (!content || content.length < 10) {
+      return { success: false, error: 'Не удалось извлечь текст со страницы' };
+    }
+    
     return { success: true, content, url: view.webContents.getURL(), title: view.webContents.getTitle() };
+  } catch (err) {
+    console.error('[ai-get-page-content] Error:', err.message);
+    return { success: false, error: 'Ошибка при чтении страницы: ' + err.message };
+  }
+});
+
+// ─── External AI Provider IPC Handlers ────────────────────────────────────────
+ipcMain.handle('ai-get-providers', () => {
+  console.log('[AI Providers] ai-get-providers called, activeProvider:', aiProviderConfig.activeProvider);
+  const providers = Object.entries(AI_PROVIDERS).map(([id, p]) => ({
+    id, name: p.name, models: p.models,
+    hasApiKey: !!aiProviderConfig.apiKeys[id]
+  }));
+  console.log('[AI Providers] Returning providers:', providers.map(p => p.id).join(', '));
+  return {
+    providers,
+    activeProvider: aiProviderConfig.activeProvider,
+    activeModel: aiProviderConfig.activeModel,
+    enabled: aiProviderConfig.enabled
+  };
+});
+
+ipcMain.handle('ai-set-provider', (_event, { provider }) => {
+  if (!AI_PROVIDERS[provider]) return { success: false, error: 'Unknown provider' };
+  aiProviderConfig.activeProvider = provider;
+  aiProviderConfig.activeModel = AI_PROVIDERS[provider].models[0];
+  aiProviderConfig.enabled = true;
+  saveAiProviderConfig();
+  return { success: true };
+});
+
+ipcMain.handle('ai-set-api-key', (_event, { provider, apiKey }) => {
+  const key = apiKey.trim();
+  let detectedProvider = provider;
+  
+  // Auto-detect provider if not specified
+  if (!detectedProvider) {
+    detectedProvider = detectProvider(key);
+    if (!detectedProvider) {
+      return { success: false, error: 'Не удалось определить провайдер по ключу. Укажите провайдера вручную.' };
+    }
+  }
+  
+  if (!AI_PROVIDERS[detectedProvider]) return { success: false, error: 'Unknown provider' };
+  
+  aiProviderConfig.apiKeys[detectedProvider] = key;
+  aiProviderConfig.activeProvider = detectedProvider;
+  aiProviderConfig.activeModel = AI_PROVIDERS[detectedProvider].models[0];
+  aiProviderConfig.enabled = true;
+  saveAiProviderConfig();
+  
+  return { success: true, provider: detectedProvider, name: AI_PROVIDERS[detectedProvider].name };
+});
+
+ipcMain.handle('ai-get-provider-status', (_event, { provider }) => {
+  const p = AI_PROVIDERS[provider];
+  if (!p) return { success: false, error: 'Unknown provider' };
+  return {
+    success: true,
+    hasApiKey: !!aiProviderConfig.apiKeys[provider],
+    activeProvider: aiProviderConfig.activeProvider === provider,
+    activeModel: aiProviderConfig.activeModel
+  };
+});
+
+ipcMain.handle('ai-set-model', (_event, { model }) => {
+  if (!model) return { success: false, error: 'Model not specified' };
+  aiProviderConfig.activeModel = model;
+  saveAiProviderConfig();
+  return { success: true };
+});
+
+// Check clipboard for image data - helps detect multimodal capability
+ipcMain.handle('ai-check-clipboard', async () => {
+  try {
+    const formats = clipboard.availableFormats();
+    const hasImage = formats.some(f => f.startsWith('image/'));
+    return { success: true, hasImage, formats };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// Fetch available models from OpenRouter
+ipcMain.handle('ai-get-openrouter-models', async () => {
+  console.log('[OpenRouter] ai-get-openrouter-models called');
+  const apiKey = aiProviderConfig.apiKeys['openrouter'];
+  if (!apiKey) {
+    console.log('[OpenRouter] No API key found');
+    return { success: false, error: 'API ключ OpenRouter не найден' };
+  }
+  console.log('[OpenRouter] API key found, making request...');
+  
+  return new Promise((resolve) => {
+    const req = https.get('https://openrouter.ai/api/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'intra-browser',
+        'X-Title': 'Intra Browser'
+      }
+    }, (res) => {
+      console.log('[OpenRouter] Response status:', res.statusCode);
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          console.log('[OpenRouter] Got data, models count:', json.data?.length);
+          if (json.data && Array.isArray(json.data)) {
+            // Sort by price (cheapest first) and take top 30
+            const models = json.data
+              .map(m => ({
+                id: m.id,
+                name: m.name || m.id,
+                context: m.context_length,
+                pricing: m.pricing
+              }))
+              .sort((a, b) => {
+                const aPrice = parseFloat(a.pricing?.prompt || '0') + parseFloat(a.pricing?.completion || '0');
+                const bPrice = parseFloat(b.pricing?.prompt || '0') + parseFloat(b.pricing?.completion || '0');
+                return aPrice - bPrice;
+              })
+              .slice(0, 30);
+            
+            console.log('[OpenRouter] Returning', models.length, 'models');
+            resolve({ success: true, models });
+          } else {
+            console.log('[OpenRouter] Invalid format');
+            resolve({ success: false, error: 'Неверный формат ответа' });
+          }
+        } catch (e) {
+          console.log('[OpenRouter] Parse error:', e.message);
+          resolve({ success: false, error: 'Ошибка парсинга: ' + e.message });
+        }
+      });
+    });
+    
+    req.on('error', (err) => {
+      console.log('[OpenRouter] Request error:', err.message);
+      resolve({ success: false, error: err.message });
+    });
+    
+    req.end();
+  });
+});
+
+let providerAbortCtrl = null;
+let providerHistory = [];
+
+ipcMain.handle('ai-chat-with-provider', async (_event, { message, model, options = {} }) => {
+  const provider = aiProviderConfig.activeProvider;
+  const apiKey = aiProviderConfig.apiKeys[provider];
+  
+  if (!provider || !apiKey) {
+    return { success: false, error: 'Провайдер не настроен. Добавьте API ключ в настройках.' };
+  }
+
+  if (providerAbortCtrl) { try { providerAbortCtrl.abort(); } catch (_) {} }
+  providerAbortCtrl = new AbortController();
+  
+  providerHistory.push({ role: 'user', content: message });
+  
+  const maxMessages = 20;
+  while (providerHistory.length > maxMessages) {
+    providerHistory = providerHistory.slice(2);
+  }
+
+  try {
+    if (provider === 'openai') {
+      return await callOpenAI(apiKey, model || aiProviderConfig.activeModel, providerHistory, options, providerAbortCtrl);
+    } else if (provider === 'anthropic') {
+      return await callAnthropic(apiKey, model || aiProviderConfig.activeModel, providerHistory, options, providerAbortCtrl);
+    } else if (provider === 'google') {
+      return await callGoogleGemini(apiKey, model || aiProviderConfig.activeModel, message, providerHistory, options, providerAbortCtrl);
+    } else if (provider === 'openrouter') {
+      return await callOpenRouter(apiKey, model || aiProviderConfig.activeModel, providerHistory, options, providerAbortCtrl);
+    }
   } catch (err) {
     return { success: false, error: err.message };
   }
+  return { success: false, error: 'Unknown provider' };
+});
+
+async function callOpenAI(apiKey, model, messages, options, ctrl) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model,
+      messages: messages.map(m => ({ role: m.role === 'bot' ? 'assistant' : m.role, content: m.content })),
+      stream: true,
+      max_tokens: options.maxTokens || 4096,
+      temperature: options.temperature || 0.7
+    });
+
+    const req = https.request(AI_PROVIDERS.openai.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      }
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+        const lines = data.split('\n');
+        data = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const json = line.slice(6);
+            if (json === '[DONE]') {
+              providerHistory.push({ role: 'bot', content: '' });
+              if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-done');
+              resolve({ success: true });
+              return;
+            }
+            try {
+              const obj = JSON.parse(json);
+              const content = obj.choices?.[0]?.delta?.content || '';
+              if (content) {
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-token', content);
+                const last = providerHistory[providerHistory.length - 1];
+                if (last && last.role === 'bot') last.content += content;
+              }
+            } catch (_) {}
+          }
+        }
+      });
+      res.on('end', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-done');
+        resolve({ success: true });
+      });
+    });
+
+    req.on('error', (err) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-error', err.message);
+      resolve({ success: false, error: err.message });
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+async function callAnthropic(apiKey, model, messages, options, ctrl) {
+  return new Promise((resolve) => {
+    const systemMsg = messages.find(m => m.role === 'system');
+    const userMsgs = messages.filter(m => m.role !== 'system');
+    
+    const body = JSON.stringify({
+      model,
+      max_tokens: options.maxTokens || 4096,
+      messages: userMsgs.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+      system: systemMsg?.content,
+      stream: true
+    });
+
+    const req = https.request(AI_PROVIDERS.anthropic.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      }
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+        const lines = data.split('\n');
+        data = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const json = line.slice(6);
+            if (json === '[DONE]') {
+              providerHistory.push({ role: 'bot', content: '' });
+              if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-done');
+              resolve({ success: true });
+              return;
+            }
+            try {
+              const obj = JSON.parse(json);
+              const content = obj.delta?.text || '';
+              if (content) {
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-token', content);
+                const last = providerHistory[providerHistory.length - 1];
+                if (last && last.role === 'bot') last.content += content;
+              }
+            } catch (_) {}
+          }
+        }
+      });
+      res.on('end', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-done');
+        resolve({ success: true });
+      });
+    });
+
+    req.on('error', (err) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-error', err.message);
+      resolve({ success: false, error: err.message });
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+async function callGoogleGemini(apiKey, model, message, history, options, ctrl) {
+  return new Promise((resolve) => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+    
+    const contents = [];
+    for (const m of history) {
+      contents.push({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] });
+    }
+
+    const body = JSON.stringify({
+      contents,
+      generationConfig: {
+        temperature: options.temperature || 0.7,
+        maxOutputTokens: options.maxTokens || 4096
+      }
+    });
+
+    const req = https.request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+        const lines = data.split('\n');
+        data = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(line.slice(6));
+              const content = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+              if (content) {
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-token', content);
+                const last = providerHistory[providerHistory.length - 1];
+                if (last && last.role === 'bot') last.content += content;
+              }
+            } catch (_) {}
+          }
+        }
+      });
+      res.on('end', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-done');
+        resolve({ success: true });
+      });
+    });
+
+    req.on('error', (err) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-error', err.message);
+      resolve({ success: false, error: err.message });
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+async function callOpenRouter(apiKey, model, messages, options, ctrl) {
+  console.log('[OpenRouter] Calling with model:', model);
+  
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model,
+      messages: messages.map(m => ({ role: m.role === 'bot' ? 'assistant' : m.role, content: m.content })),
+      stream: true,
+      max_tokens: options.maxTokens || 4096,
+      temperature: options.temperature || 0.7
+    });
+
+    console.log('[OpenRouter] URL:', AI_PROVIDERS.openrouter.apiUrl);
+    console.log('[OpenRouter] Body model:', model);
+
+    const req = https.request(AI_PROVIDERS.openrouter.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'intra-browser',
+        'X-Title': 'Intra Browser'
+      }
+    }, (res) => {
+      console.log('[OpenRouter] Response status:', res.statusCode);
+      
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+        const lines = data.split('\n');
+        data = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const json = line.slice(6);
+            if (json === '[DONE]') {
+              providerHistory.push({ role: 'bot', content: '' });
+              if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-done');
+              resolve({ success: true });
+              return;
+            }
+            try {
+              const obj = JSON.parse(json);
+              console.log('[OpenRouter] Token received, content length:', obj.choices?.[0]?.delta?.content?.length);
+              const content = obj.choices?.[0]?.delta?.content || '';
+              if (content) {
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-token', content);
+                const last = providerHistory[providerHistory.length - 1];
+                if (last && last.role === 'bot') last.content += content;
+              }
+            } catch (_) {}
+          }
+        }
+      });
+      res.on('end', () => {
+        console.log('[OpenRouter] Response ended');
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-done');
+        resolve({ success: true });
+      });
+    });
+
+    req.on('error', (err) => {
+      console.error('[OpenRouter] Error:', err.message);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ai-provider-error', err.message);
+      resolve({ success: false, error: err.message });
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+ipcMain.on('ai-abort-provider', () => {
+  if (providerAbortCtrl) { try { providerAbortCtrl.abort(); } catch (_) {} providerAbortCtrl = null; }
 });
 
 ipcMain.handle('open-devtools', () => {
@@ -1656,17 +2475,52 @@ ipcMain.on('ctx-select', (_e, { action, payload }) => {
     case 'ai-summarize-selection':
       mainWindow?.webContents.send('ai-selection-request', {
         text: payload?.text || '', promptType: 'summarize',
-        label: 'Резюмировать выделенное', prompt: 'Сделай краткое резюме следующего текста на русском языке.'
+        label: 'Резюмировать выделенное', prompt: 'На основе предоставленного текста сделай краткое резюме на русском языке.'
       }); break;
     case 'ai-theses-selection':
       mainWindow?.webContents.send('ai-selection-request', {
         text: payload?.text || '', promptType: 'theses',
-        label: 'Ключевые тезисы', prompt: 'Выдели ключевые тезисы и факты следующего текста в виде маркированного списка.'
+        label: 'Ключевые тезисы', prompt: 'На основе предоставленного текста выдели ключевые тезисы и факты в виде маркированного списка.'
       }); break;
     case 'ai-explain-selection':
       mainWindow?.webContents.send('ai-selection-request', {
         text: payload?.text || '', promptType: 'explain',
-        label: 'Объяснить текст', prompt: 'Объясни простыми словами, что означает следующий текст.'
+        label: 'Объяснить текст', prompt: 'На основе предоставленного текста объясни простыми словами, что он означает.'
+      }); break;
+    case 'ai-translate-selection':
+      mainWindow?.webContents.send('ai-selection-request', {
+        text: payload?.text || '', promptType: 'translate',
+        label: 'Перевести', prompt: 'На основе предоставленного текста переведи его на русский язык.'
+      }); break;
+    case 'ai-search-selection':
+      mainWindow?.webContents.send('ai-selection-request', {
+        text: payload?.text || '', promptType: 'search',
+        label: 'Найти информацию', prompt: 'На основе предоставленного текста найди дополнительную информацию по теме и дай краткое объяснение.'
+      }); break;
+    case 'ai-improve-selection':
+      mainWindow?.webContents.send('ai-selection-request', {
+        text: payload?.text || '', promptType: 'improve',
+        label: 'Улучшить стиль', prompt: 'На основе предоставленного текста перепиши его, улучшив стиль и грамматику, сохранив смысл.'
+      }); break;
+    case 'ai-shorten-selection':
+      mainWindow?.webContents.send('ai-selection-request', {
+        text: payload?.text || '', promptType: 'shorten',
+        label: 'Сократить', prompt: 'На основе предоставленного текста сократи его, сохранив ключевой смысл и информацию.'
+      }); break;
+    case 'ai-expand-selection':
+      mainWindow?.webContents.send('ai-selection-request', {
+        text: payload?.text || '', promptType: 'expand',
+        label: 'Расширить', prompt: 'На основе предоставленного текста расширь его, добавив больше деталей и контекста.'
+      }); break;
+    case 'ai-code-selection':
+      mainWindow?.webContents.send('ai-selection-request', {
+        text: payload?.text || '', promptType: 'code',
+        label: 'Объяснить код', prompt: 'На основе предоставленного кода объясни как он работает и что делает.'
+      }); break;
+    case 'ai-extract-selection':
+      mainWindow?.webContents.send('ai-selection-request', {
+        text: payload?.text || '', promptType: 'extract',
+        label: 'Извлечь данные', prompt: 'На основе предоставленного текста извлеки структурированные данные (имена, даты, места, факты) в виде списка.'
       }); break;
   }
 });
@@ -1802,6 +2656,65 @@ ipcMain.handle('remove-download', (_event, { downloadId }) => {
   saveDownloadsToFile();
   return { success: true };
 });
+
+// ─── AI Chat History IPC ─────────────────────────────────────────────────────
+let currentChatSessionId = null;
+
+ipcMain.handle('ai-history-list', () => listChatSessions());
+
+ipcMain.handle('ai-history-load', (_event, { sessionId }) => {
+  const result = loadChatSession(sessionId);
+  if (result.success) {
+    currentChatSessionId = sessionId;
+    // Restore history for local model
+    aiHistory = (result.session.messages || [])
+      .filter(m => m.role === 'user' || m.role === 'bot')
+      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text || '' }));
+    // Restore history for provider
+    providerHistory = (result.session.messages || [])
+      .filter(m => m.role === 'user' || m.role === 'bot')
+      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text || '' }));
+  }
+  return result;
+});
+
+ipcMain.handle('ai-history-save', (_event, { sessionId, messages, title, provider, model }) => {
+  // Auto-generate title from first message if not provided
+  let autoTitle = title;
+  if (!autoTitle && messages.length > 0) {
+    const firstUserMsg = messages.find(m => m.role === 'user');
+    if (firstUserMsg) {
+      autoTitle = firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '');
+    }
+  }
+  const result = saveChatSession(sessionId, messages, autoTitle, provider, model);
+  if (result.success) {
+    currentChatSessionId = sessionId;
+  }
+  return result;
+});
+
+ipcMain.handle('ai-history-delete', (_event, { sessionId }) => {
+  if (currentChatSessionId === sessionId) {
+    currentChatSessionId = null;
+  }
+  return deleteChatSession(sessionId);
+});
+
+ipcMain.handle('ai-history-rename', (_event, { sessionId, title }) => {
+  return renameChatSession(sessionId, title);
+});
+
+ipcMain.handle('ai-history-get-current', () => currentChatSessionId);
+
+ipcMain.handle('ai-history-new-session', () => {
+  currentChatSessionId = null;
+  aiHistory = [];
+  providerHistory = [];
+  return { sessionId: `chat-${Date.now()}` };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 

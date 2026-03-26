@@ -1,7 +1,8 @@
 {
   "name": "intra-browser",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Intra — браузер для интранет сетей",
+  "author": "Intra Browser Team",
   "main": "main.js",
   "scripts": {
     "start": "concurrently \"vite --port 3000\" \"wait-on tcp:3000 && electron --disable-gpu .\"",
@@ -58,7 +59,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "intrabrowser-logo.ico",
+      "uninstallerIcon": "intrabrowser-logo.ico"
     },
     "linux": {
       "target": "AppImage"
