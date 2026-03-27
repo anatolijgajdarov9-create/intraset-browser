@@ -135,4 +135,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openBrowserMenu: (pos) => ipcRenderer.invoke('open-browser-menu', pos),
   showInFolder: (downloadId) => ipcRenderer.invoke('show-in-folder', { downloadId }),
   removeDownload: (downloadId) => ipcRenderer.invoke('remove-download', { downloadId }),
+
+  // Интрасеть (intraset-network)
+  intraGetStatus: () => ipcRenderer.invoke('intra-get-status'),
+  intraGetNodes: () => ipcRenderer.invoke('intra-get-nodes'),
+  intraGetFiles: () => ipcRenderer.invoke('intra-get-files'),
+  intraAddNode: (host, port, name) => ipcRenderer.invoke('intra-add-node', { host, port, name }),
+  intraGetMessages: (contactId) => ipcRenderer.invoke('intra-get-messages', { contactId }),
+  intraSendMessage: (receiverId, content) => ipcRenderer.invoke('intra-send-message', { receiverId, content }),
 });

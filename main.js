@@ -2715,6 +2715,75 @@ ipcMain.handle('ai-history-new-session', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Интрасеть (intraset-network) IPC
+// ─────────────────────────────────────────────────────────────────────────────
+
+ipcMain.handle('intra-get-status', async () => {
+  try {
+    const res = await fetch('http://localhost:3847/api/status');
+    return await res.json();
+  } catch (e) {
+    return { error: 'Интрасеть недоступна', details: e.message };
+  }
+});
+
+ipcMain.handle('intra-get-nodes', async () => {
+  try {
+    const res = await fetch('http://localhost:3847/api/nodes');
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('intra-get-files', async () => {
+  try {
+    const res = await fetch('http://localhost:3847/api/files');
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('intra-add-node', async (_event, { host, port, name }) => {
+  try {
+    const res = await fetch('http://localhost:3847/api/nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, port, name })
+    });
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('intra-get-messages', async (_event, { contactId }) => {
+  try {
+    const url = contactId 
+      ? `http://localhost:3847/api/messages/${contactId}`
+      : 'http://localhost:3847/api/messages';
+    const res = await fetch(url);
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('intra-send-message', async (_event, { receiverId, content }) => {
+  try {
+    const res = await fetch('http://localhost:3847/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receiverId, content })
+    });
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 

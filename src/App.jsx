@@ -346,6 +346,29 @@ export default function App() {
   const handleNavigate = useCallback(async (url) => {
     if (!url || url === 'intra://home') return goHome(activeTabId);
 
+    // Обработка intra:// протокола (Интрасеть)
+    if (url.startsWith('intra://')) {
+      const intraPath = url.replace('intra://', '');
+      
+      // intra://nodes, intra://chat, intra://files, intra://settings, intra://my
+      const validIntraUrls = ['nodes', 'chat', 'files', 'settings', 'my', 'ai-chat'];
+      if (validIntraUrls.includes(intraPath) || intraPath.startsWith('chat/')) {
+        if (intraPath === 'ai-chat') {
+          return handleOpenAiChat();
+        }
+        // Для других intra:// страниц - показать в HomePage через специальный URL
+        setAddressBarValue(url);
+        flushSync(() => {
+          setTabs(prev => prev.map(t => t.id === activeTabId
+            ? { ...t, url: url, loading: false, isHome: false, isAiChat: false, isBlocked: false }
+            : t));
+        });
+        return;
+      }
+      // Неизвестный intra:// адрес - на главную
+      return goHome(activeTabId);
+    }
+
     let finalUrl = url.trim();
     if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://') && !finalUrl.startsWith('file://')) {
       const isUrl = /^[\w.-]+\.[a-z]{2,}(\/.*)?$/.test(finalUrl) || /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(finalUrl);

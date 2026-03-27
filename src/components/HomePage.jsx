@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import IntranetPanel from './IntranetPanel';
 
 const isElectron = typeof window.electronAPI !== 'undefined';
 
@@ -604,6 +605,9 @@ export default function HomePage({
               icon={<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>}
             />
           )}
+          <SBtn active={panel==='intranet'} label="Интрасеть" onClick={() => setPanel(p => p==='intranet'?null:'intranet')}
+            icon={<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>}
+          />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
@@ -1335,7 +1339,13 @@ export default function HomePage({
 
       {panel === 'ai' && (
         <Panel title="AI Модель" onClose={() => setPanel(null)}>
-          <div style={{ display:'flex',flexDirection:'column',gap:12 }}>
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+              <div style={{ padding:10, borderRadius:8, background:'#f0f9ff', border:'1px solid #bae6fd' }}>
+                <div style={{ fontSize:11, color:'#0369a1', fontWeight:600 }}>Intra AI</div>
+                <div style={{ fontSize:10, color:'#0c4a6e', marginTop:4 }}>Локальные модели GGUF</div>
+              </div>
+            </div>
+            <div style={{ display:'flex',flexDirection:'column',gap:12 }}>
             <div style={{ padding:'12px 14px',borderRadius:10,background:aiLoaded?'#f0fdf4':'#f8fafc',border:`1px solid ${aiLoaded?'#bbf7d0':'#e2e8f0'}` }}>
               <div style={{ fontSize:13,fontWeight:700,color:aiLoaded?'#166534':'#64748b',marginBottom:6 }}>
                 {aiLoaded ? aiModel?.name : aiLoading ? 'Загрузка...' : 'Модель не выбрана'}
@@ -1441,6 +1451,10 @@ export default function HomePage({
             </div>
           </div>
         </Panel>
+      )}
+
+      {panel === 'intranet' && (
+        <IntranetPanel onClose={() => setPanel(null)} onNavigate={onNavigate} />
       )}
 
       {panel === 'settings' && (
