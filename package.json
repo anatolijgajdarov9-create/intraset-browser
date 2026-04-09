@@ -1,6 +1,6 @@
 {
   "name": "intra-browser",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Intra — браузер для интранет сетей",
   "author": "Intra Browser Team",
   "main": "main.js",
@@ -38,6 +38,8 @@
       "preload.js",
       "context-menu.html",
       "context-menu-preload.js",
+      "debug-modal.html",
+      "debug-modal-preload.js",
       "browser-preload.js",
       "package.json",
       "intrabrowser-logo.ico",

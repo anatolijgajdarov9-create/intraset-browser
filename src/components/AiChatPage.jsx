@@ -272,6 +272,9 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   const [ensembleMode, setEnsembleMode] = useState(false);
   const [ensembleProgress, setEnsembleProgress] = useState(null); // {phase, modelName, step, total}
 
+  // ── AI Mode: local (GGUF) or cloud (providers) ────────────────────────────
+  const [aiMode, setAiMode] = useState(() => localStorage.getItem('intra-ai-mode') || 'local');
+
   // ── External AI Providers ─────────────────────────────────────────────────
   const [aiProviders, setAiProviders] = useState([]);
   const [activeProvider, setActiveProvider] = useState(null);
@@ -428,32 +431,20 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   // ── External AI Providers ─────────────────────────────────────────────────
   useEffect(() => {
     if (!isElectron) return;
-    
-    console.log('[AiChat] useEffect: calling aiGetProviders');
-    
+
     const fetchProviders = async () => {
       try {
         const data = await window.electronAPI.aiGetProviders();
-        console.log('[AiChat] aiGetProviders result:', data.activeProvider, data.activeModel, 'enabled:', data.enabled);
-        
         setAiProviders(data.providers || []);
         setActiveProvider(data.activeProvider);
         setProviderEnabled(data.enabled);
-        
-        console.log('[AiChat] After setState - activeProvider:', data.activeProvider, 'enabled:', data.enabled);
-        
         if (data.activeProvider && data.enabled) {
-          console.log('[AiChat] Fetching models for provider:', data.activeProvider);
-          
           if (data.activeProvider === 'openrouter') {
             const modelsRes = await window.electronAPI.aiGetOpenRouterModels();
-            console.log('[AiChat] OpenRouter models result:', modelsRes.success, modelsRes.models?.length);
             if (modelsRes.success && modelsRes.models) {
               setOpenRouterModels(modelsRes.models);
               setSelectedModel(data.activeModel || modelsRes.models[0]?.id);
-              console.log('[AiChat] Set openRouterModels:', modelsRes.models.length);
             } else {
-              console.log('[AiChat] Failed to get models:', modelsRes.error);
               setSelectedModel(data.activeModel);
             }
           } else {
@@ -464,11 +455,9 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
             }
           }
         }
-      } catch (e) {
-        console.error('[AiChat] Error:', e);
-      }
+      } catch (_) {}
     };
-    
+
     fetchProviders();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -503,17 +492,6 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
     return () => { offProviderToken(); offProviderDone(); offProviderError(); };
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (isElectron && activeProvider === 'openrouter' && openRouterModels.length > 0) {
-      console.log('[AiChat] OpenRouter models ARE available:', openRouterModels.length);
-    }
-  }, [activeProvider, providerEnabled, openRouterModels]);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    console.log('[AiChat] Debug - providerEnabled:', providerEnabled, 'activeProvider:', activeProvider, 'openRouterModels:', openRouterModels.length);
-  }, [activeProvider, providerEnabled, openRouterModels]);
 
   const handleSaveApiKey = async () => {
     if (!isElectron || !apiKeyInput.trim()) return;
@@ -1080,8 +1058,27 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           </div>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>AI Чат</div>
-            <div style={{ fontSize: 11, color: '#94a3b8' }}>Локальная нейросеть</div>
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>{aiMode === 'cloud' ? 'Облачные провайдеры' : 'Локальная нейросеть'}</div>
           </div>
+        </div>
+
+        {/* Local / Cloud mode switcher */}
+        <div style={{ display: 'flex', gap: 3, background: '#f1f5f9', borderRadius: 9, padding: 3, border: '1px solid #e2e8f0' }}>
+          {[
+            { id: 'local', icon: <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>, label: 'Локальная' },
+            { id: 'cloud', icon: <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>, label: 'Облачная' }
+          ].map(m => (
+            <button key={m.id} onClick={() => { setAiMode(m.id); localStorage.setItem('intra-ai-mode', m.id); }}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                padding: '5px 0', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 600,
+                background: aiMode === m.id ? 'white' : 'transparent',
+                color: aiMode === m.id ? '#1e293b' : '#64748b',
+                cursor: 'pointer', boxShadow: aiMode === m.id ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                transition: 'all 0.15s'
+              }}
+            >{m.icon}{m.label}</button>
+          ))}
         </div>
 
         {/* Model status */}
@@ -1102,8 +1099,34 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           </div>
         </div>
 
-        {/* ── External AI Providers ───────────────────────────────────────────── */}
-        <div style={{ borderRadius: 10, border: `1px solid ${providerEnabled ? '#7c3aed' : '#e2e8f0'}`, padding: '10px 12px', background: providerEnabled ? '#faf5ff' : '#f8fafc' }}>
+        {/* ── MCP Tools (shown in both modes) ─────────────────────────────────── */}
+        <div style={{ borderRadius: 10, border: '1px solid #e2e8f0', padding: '10px 12px', background: '#f8fafc' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 8 }}>Инструменты (MCP)</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {[
+              { id: 'search', label: 'Веб-поиск', desc: 'DuckDuckGo', icon: '🔍', state: searchMode, setter: setSearchMode },
+              { id: 'wiki', label: 'Wikipedia', desc: 'Поиск по энциклопедии', icon: '📖', state: wikiSearch, setter: setWikiSearch },
+              { id: 'url', label: 'Загрузка URL', desc: 'Читать веб-страницы', icon: '🌐', state: researchMode, setter: (v) => { setResearchMode(v); if (!v) setWikiSearch(false); } },
+            ].map(tool => (
+              <label key={tool.id} style={{
+                display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer',
+                padding: '5px 6px', borderRadius: 7, transition: 'background 0.15s',
+                background: tool.state ? '#eff6ff' : 'transparent'
+              }}>
+                <input type="checkbox" checked={tool.state} onChange={e => tool.setter(e.target.checked)}
+                  style={{ accentColor: '#2563eb', width: 13, height: 13, flexShrink: 0 }} />
+                <span style={{ fontSize: 14 }}>{tool.icon}</span>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: tool.state ? '#1e40af' : '#374151', lineHeight: 1.2 }}>{tool.label}</div>
+                  <div style={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.2 }}>{tool.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* ── External AI Providers (cloud mode only) ──────────────────────────── */}
+        {aiMode === 'cloud' && <div style={{ borderRadius: 10, border: `1px solid ${providerEnabled ? '#7c3aed' : '#e2e8f0'}`, padding: '10px 12px', background: providerEnabled ? '#faf5ff' : '#f8fafc' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', marginBottom: 8 }}>Внешние провайдеры</div>
           
           {showApiKeyInput ? (
@@ -1180,18 +1203,13 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
               
               {(providerEnabled && activeProvider === 'openrouter') ? (
                 <div style={{ marginTop: 8, padding: 8, background: openRouterModels.length > 0 ? '#f0f9ff' : '#fef3c7', borderRadius: 6, border: `1px solid ${openRouterModels.length > 0 ? '#bae6fd' : '#fcd34d'}` }}>
-                  <div style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>DEBUG: {openRouterModels.length} models, providerEnabled={String(providerEnabled)}, activeProvider={activeProvider}</div>
                   <label style={{ fontSize: 10, fontWeight: 600, color: openRouterModels.length > 0 ? '#0369a1' : '#92400e', display: 'block', marginBottom: 4 }}>
                     {openRouterModels.length > 0 ? `OpenRouter • ${openRouterModels.length} моделей` : 'Загрузка моделей OpenRouter...'}
                   </label>
                   {openRouterModels.length > 0 ? (
                     <select
                       value={selectedModel}
-                      onChange={e => {
-                        console.log('[AiChat] Model changed to:', e.target.value);
-                        setSelectedModel(e.target.value);
-                        if (isElectron) window.localStorage.setItem('intra-ai-model', e.target.value);
-                      }}
+                      onChange={e => { setSelectedModel(e.target.value); if (isElectron) window.localStorage.setItem('intra-ai-model', e.target.value); }}
                       style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 6, border: '1px solid #7dd3fc', background: 'white', cursor: 'pointer' }}
                     >
                       {openRouterModels.map(m => (
@@ -1218,20 +1236,15 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
               )}
             </div>
           )}
-        </div>
+        </div>}
 
-        {/* Context size select */}
+        {/* Context size + GPU layers (local mode only) */}
+        {aiMode === 'local' && <>
         <div>
-          <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 5 }}>
-            Размер контекста
-          </label>
-          <select
-            value={aiContextSize}
+          <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 5 }}>Размер контекста</label>
+          <select value={aiContextSize}
             onChange={e => { const v = Number(e.target.value); setAiContextSize(v); localStorage.setItem('intra-ai-context', String(v)); }}
-            style={{
-              width: '100%', fontSize: 12, padding: '6px 10px', borderRadius: 7,
-              border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', outline: 'none', color: '#1e293b'
-            }}
+            style={{ width: '100%', fontSize: 12, padding: '6px 10px', borderRadius: 7, border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', outline: 'none', color: '#1e293b' }}
           >
             <option value={2048}>2 048 токенов</option>
             <option value={4096}>4 096 (по умолч.)</option>
@@ -1240,19 +1253,11 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
             <option value={32768}>32 768 токенов</option>
           </select>
         </div>
-
-        {/* GPU layers select */}
         <div>
-          <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 5 }}>
-            GPU слои (0 = CPU, -1 = все на GPU)
-          </label>
-          <select
-            value={gpuLayers}
+          <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 5 }}>GPU слои (0 = CPU, -1 = все на GPU)</label>
+          <select value={gpuLayers}
             onChange={e => { const v = Number(e.target.value); setGpuLayers(v); localStorage.setItem('intra-ai-gpu-layers', String(v)); }}
-            style={{
-              width: '100%', fontSize: 12, padding: '6px 10px', borderRadius: 7,
-              border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', outline: 'none', color: '#1e293b'
-            }}
+            style={{ width: '100%', fontSize: 12, padding: '6px 10px', borderRadius: 7, border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer', outline: 'none', color: '#1e293b' }}
           >
             <option value={0}>0 — только CPU</option>
             <option value={10}>10 слоёв на GPU</option>
@@ -1262,8 +1267,9 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
             <option value={-1}>-1 — все слои на GPU</option>
           </select>
         </div>
+        </>}
 
-        {/* Temperature slider */}
+        {/* Temperature slider (common to both modes) */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
             <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b' }}>Температура</label>
@@ -1303,7 +1309,8 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
           </div>
         </div>
 
-        {/* Load model button */}
+        {/* Load model button (local only) */}
+        {aiMode === 'local' && <>
         <button
           onClick={handleLoadModel}
           disabled={aiLoading}
@@ -1367,6 +1374,7 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
             </>
           )}
         </div>
+        </>}
 
         {/* Load progress */}
         {aiLoading && !aiLoaded && aiLoadProgress !== null && (

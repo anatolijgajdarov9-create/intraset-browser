@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-console.log('[Preload] preload.js loaded');
-
 contextBridge.exposeInMainWorld('electronAPI', {
   // Tab management
   createTab: (tabId, url) => ipcRenderer.invoke('create-tab', { tabId, url }),
@@ -102,36 +100,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Downloads
   getDownloads: () => ipcRenderer.invoke('get-downloads'),
   clearDownloads: () => ipcRenderer.invoke('clear-downloads'),
-  onDownloadStarted: (cb) => { 
-    console.log('[Preload-DBG] onDownloadStarted called - setting up listener');
-    const fn = (_e, data) => { 
-      console.log('[Preload-DBG] download-started RECEIVED:', JSON.stringify(data, null, 2)); 
-      console.log('[Preload-DBG] Full event object keys:', Object.keys(_e));
-      console.log('[Preload-DBG] ipcRenderer event listeners count:', ipcRenderer.listenerCount('download-started'));
-      cb(data); 
-    }; 
-    console.log('[Preload-DBG] Setting up download-started listener');
-    ipcRenderer.on('download-started', fn); 
-    return () => { 
-      console.log('[Preload-DBG] Removing download-started listener');
-      ipcRenderer.removeListener('download-started', fn); 
-    }; 
+  onDownloadStarted: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on('download-started', fn);
+    return () => ipcRenderer.removeListener('download-started', fn);
   },
-  onDownloadUpdated: (cb) => { 
-    console.log('[Preload-DBG] onDownloadUpdated called - setting up listener');
-    const fn = (_e, data) => { 
-      console.log('[Preload-DBG] download-updated RECEIVED:', JSON.stringify(data, null, 2)); 
-      cb(data); 
-    }; 
-    console.log('[Preload-DBG] Setting up download-updated listener');
-    ipcRenderer.on('download-updated', fn); 
-    return () => { 
-      console.log('[Preload-DBG] Removing download-updated listener');
-      ipcRenderer.removeListener('download-updated', fn); 
-    }; 
+  onDownloadUpdated: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on('download-updated', fn);
+    return () => ipcRenderer.removeListener('download-updated', fn);
   },
 
   openDevTools: () => ipcRenderer.invoke('open-devtools'),
+
+  // Find in page
+  findInPage: (tabId, text, options) => ipcRenderer.invoke('find-in-page', { tabId, text, ...options }),
+  stopFind: (tabId, action) => ipcRenderer.invoke('stop-find', { tabId, action }),
+  onFindResult: (cb) => { const fn = (_e, data) => cb(data); ipcRenderer.on('find-result', fn); return () => ipcRenderer.removeListener('find-result', fn); },
+
+  // Zoom
+  zoomIn: (tabId) => ipcRenderer.invoke('zoom-in', { tabId }),
+  zoomOut: (tabId) => ipcRenderer.invoke('zoom-out', { tabId }),
+  zoomReset: (tabId) => ipcRenderer.invoke('zoom-reset', { tabId }),
+  getZoom: (tabId) => ipcRenderer.invoke('get-zoom', { tabId }),
+
+  // Tab mute
+  setTabMuted: (tabId, muted) => ipcRenderer.invoke('set-tab-muted', { tabId, muted }),
+  getTabMuted: (tabId) => ipcRenderer.invoke('get-tab-muted', { tabId }),
   openBrowserMenu: (pos) => ipcRenderer.invoke('open-browser-menu', pos),
   showInFolder: (downloadId) => ipcRenderer.invoke('show-in-folder', { downloadId }),
   removeDownload: (downloadId) => ipcRenderer.invoke('remove-download', { downloadId }),
@@ -141,6 +136,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   intraGetNodes: () => ipcRenderer.invoke('intra-get-nodes'),
   intraGetFiles: () => ipcRenderer.invoke('intra-get-files'),
   intraAddNode: (host, port, name) => ipcRenderer.invoke('intra-add-node', { host, port, name }),
+  intraDeleteNode: (nodeId) => ipcRenderer.invoke('intra-delete-node', { nodeId }),
+  intraPingNode: (nodeId) => ipcRenderer.invoke('intra-ping-node', { nodeId }),
   intraGetMessages: (contactId) => ipcRenderer.invoke('intra-get-messages', { contactId }),
+  intraGetContacts: () => ipcRenderer.invoke('intra-get-contacts'),
   intraSendMessage: (receiverId, content) => ipcRenderer.invoke('intra-send-message', { receiverId, content }),
+  intraDeleteFile: (fileId) => ipcRenderer.invoke('intra-delete-file', { fileId }),
+  intraUploadFile: (filePath) => ipcRenderer.invoke('intra-upload-file', { filePath }),
+  intraDownloadFile: (fileId, fileName) => ipcRenderer.invoke('intra-download-file', { fileId, fileName }),
 });

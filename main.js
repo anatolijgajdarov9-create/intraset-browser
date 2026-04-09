@@ -3,8 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const isDev = !app.isPackaged;
 
-console.log('[MAIN] App starting... isDev:', isDev, 'isPackaged:', app.isPackaged);
-
 let mainWindow;
 let browserViews = new Map(); // tabId -> BrowserView
 let privateTabs = new Set();  // tabIds that are private (use ephemeral partition)
@@ -21,22 +19,15 @@ function addDebugLog(tag, message, level = 'info') {
   const log = { time: new Date().toLocaleTimeString('ru-RU'), tag, level, message };
   debugLogs.push(log);
   if (debugLogs.length > MAX_DEBUG_LOGS) debugLogs.shift();
-  console.log('[DEBUG-LOG]', tag, message, '| Total logs:', debugLogs.length, '| Modal exists:', !!debugModalWin);
   if (debugModalWin && !debugModalWin.isDestroyed()) {
-    console.log('[DEBUG-LOG] Sending to modal...');
     debugModalWin.webContents.send('debug-log', log);
-  } else {
-    console.log('[DEBUG-LOG] Modal not available');
   }
 }
-
-// Добавим тестовый лог при старте
-console.log('[MAIN] Debug logs system initialized. debugLogs:', debugLogs.length);
 
 // Downloads storage (global)
 const downloads = new Map(); // downloadId -> { id, filename, url, savePath, receivedBytes, totalBytes, state, startTime }
 let downloadIdCounter = 0;
-const DOWNLOAD_DEBUG = true; // Включить диагностический лог для загрузок
+const DOWNLOAD_DEBUG = false; // Диагностический лог для загрузок (включать при отладке)
 let pendingSavePath = null;  // Ожидающий путь для сохранения изображения (save-image)
 
 // Файл для сохранения загрузок
@@ -45,7 +36,6 @@ let downloadsFilePath = '';
 function getDownloadsFilePath() {
   if (!downloadsFilePath) {
     downloadsFilePath = path.join(app.getPath('userData'), 'downloads.json');
-    console.log('[Download-DBG] downloadsFilePath:', downloadsFilePath);
   }
   return downloadsFilePath;
 }
@@ -66,21 +56,15 @@ function saveDownloadsToFile() {
 function loadDownloadsFromFile() {
   try {
     const filePath = getDownloadsFilePath();
-    console.log('[Download-DBG] Loading downloads from:', filePath);
     if (fs.existsSync(filePath)) {
       const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
       downloadIdCounter = data.downloadIdCounter || 0;
       data.downloads?.forEach(dl => downloads.set(dl.id, dl));
-      console.log('[Download-DBG] Downloads loaded from file:', downloads.size);
-    } else {
-      console.log('[Download-DBG] No downloads file found');
     }
   } catch (err) {
-    console.error('[Download-DBG] Error loading downloads:', err);
+    console.error('[Download] Error loading downloads:', err);
   }
 }
-
-console.log('[MAIN] Downloads Map initialized');
 
 // ─── AI state (llama-server subprocess + HTTP streaming) ─────────────────────
 const net            = require('net');
@@ -133,38 +117,13 @@ const AI_PROVIDERS = {
 // Auto-detect provider from API key
 function detectProvider(apiKey) {
   const key = apiKey.trim();
-  console.log('[AI Provider] Detecting from key:', key.slice(0, 15) + '...');
-  
-  // Check more specific prefixes first (longer = more specific)
-  if (key.startsWith('sk-or-v1-') || key.startsWith('sk-or-')) {
-    console.log('[AI Provider] Detected as openrouter (sk-or-v1-/sk-or-)');
-    return 'openrouter';
-  }
-  if (key.startsWith('sk-ant-')) {
-    console.log('[AI Provider] Detected as anthropic (sk-ant-)');
-    return 'anthropic';
-  }
-  if (key.startsWith('AIza')) {
-    console.log('[AI Provider] Detected as google (AIza)');
-    return 'google';
-  }
-  
-  // Then check shorter prefixes
+  if (key.startsWith('sk-or-v1-') || key.startsWith('sk-or-')) return 'openrouter';
+  if (key.startsWith('sk-ant-')) return 'anthropic';
+  if (key.startsWith('AIza')) return 'google';
   for (const [id, provider] of Object.entries(AI_PROVIDERS)) {
-    if (provider.keyPrefix && key.startsWith(provider.keyPrefix)) {
-      console.log('[AI Provider] Detected by prefix:', id, provider.name);
-      return id;
-    }
+    if (provider.keyPrefix && key.startsWith(provider.keyPrefix)) return id;
   }
-  
-  // Fallback: check by length/pattern
-  if (key.startsWith('sk-') && key.length >= 48) {
-    // Most likely OpenAI, but could also be other - default to openrouter
-    console.log('[AI Provider] Defaulting to openrouter (generic sk- with 48+ chars)');
-    return 'openrouter';
-  }
-  
-  console.log('[AI Provider] Could not detect, returning null');
+  if (key.startsWith('sk-') && key.length >= 48) return 'openrouter';
   return null;
 }
 
@@ -179,33 +138,23 @@ function loadAiProviderConfig() {
   try {
     const configPath = path.join(app.getPath('userData'), 'ai-providers.json');
     if (fs.existsSync(configPath)) {
-      const raw = fs.readFileSync(configPath, 'utf-8');
-      console.log('[AI Providers] Raw config file:', raw);
-      const loaded = JSON.parse(raw);
-      
+      const loaded = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       // Migration: fix incorrectly saved provider keys
       if (loaded.apiKeys && loaded.activeProvider) {
         const currentKey = loaded.apiKeys[loaded.activeProvider];
         if (currentKey) {
           const correctProvider = detectProvider(currentKey);
           if (correctProvider && correctProvider !== loaded.activeProvider) {
-            console.log('[AI Providers] Migrating key from', loaded.activeProvider, 'to', correctProvider);
             loaded.apiKeys[correctProvider] = currentKey;
             delete loaded.apiKeys[loaded.activeProvider];
             loaded.activeProvider = correctProvider;
-            // Also fix activeModel based on new provider
             if (AI_PROVIDERS[correctProvider]) {
               loaded.activeModel = AI_PROVIDERS[correctProvider].models[0];
             }
           }
         }
       }
-      
-      console.log('[AI Providers] Parsed config:', JSON.stringify(loaded));
       aiProviderConfig = { ...aiProviderConfig, ...loaded };
-      console.log('[AI Providers] Merged, activeProvider:', aiProviderConfig.activeProvider, 'apiKeys:', Object.keys(aiProviderConfig.apiKeys));
-    } else {
-      console.log('[AI Providers] Config file not found');
     }
   } catch (e) { console.error('[AI Providers] Load error:', e.message); }
 }
@@ -485,7 +434,6 @@ const TABBAR_HEIGHT   = 38;
 const NAVBAR_HEIGHT   = 46;
 
 function createMainWindow() {
-  console.log('[MAIN] createMainWindow called');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -504,22 +452,26 @@ function createMainWindow() {
   });
 
   let shown = false;
+  let isReadyToShowFired = false;
+  
   const tryShow = () => {
-    if (!shown && mainWindow && !mainWindow.isDestroyed()) {
+    if (shown || mainWindow.isDestroyed()) return;
+    if (!mainWindow.isVisible()) {
       shown = true;
-      console.log('[MAIN] MainWindow ready to show!');
       mainWindow.show();
     }
   };
 
-  mainWindow.once('ready-to-show', tryShow);
-  mainWindow.webContents.once('did-finish-load', tryShow);
+  mainWindow.once('ready-to-show', () => {
+    if (isReadyToShowFired) return;
+    isReadyToShowFired = true;
+    tryShow();
+    mainWindow.focus();
+  });
 
   if (isDev) {
-    console.log('[MAIN] Loading dev URL: http://localhost:3000');
     mainWindow.loadURL('http://localhost:3000');
   } else {
-    console.log('[MAIN] Loading prod file:', path.join(__dirname, 'build', 'index.html'));
     mainWindow.loadFile(path.join(__dirname, 'build', 'index.html'));
   }
 
@@ -530,20 +482,18 @@ function createMainWindow() {
 
   // Глобальный обработчик загрузок для всех сессий (включая домашнюю страницу)
   mainWindow.webContents.session.on('will-download', (event, item) => {
-    console.log('[Download-DBG] ★★★ GLOBAL will-download EVENT FIRED ★★★ item:', item.getFilename());
     const tabId = activeTabId || 'home';
     try {
       const downloadId = `dl-${++downloadIdCounter}`;
       const filename = item.getFilename();
       const url = item.getURL();
       const totalBytes = item.getTotalBytes();
-      
+
       if (pendingSavePath) {
-        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] will-download: save-image detected, applying pendingSavePath:', pendingSavePath);
         item.setSavePath(pendingSavePath);
         pendingSavePath = null;
       }
-      
+
       const dl = {
         id: downloadId,
         filename,
@@ -556,18 +506,9 @@ function createMainWindow() {
       };
       downloads.set(downloadId, dl);
       saveDownloadsToFile();
-      console.log('[Download-DBG] Download added to Map. Total downloads:', downloads.size, 'download:', dl);
 
-      // Отправляем событие сразу и через setImmediate
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('download-started', { tabId, download: dl });
-        console.log('[Download-DBG] download-started sent (direct)');
-        setImmediate(() => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('download-started', { tabId, download: dl });
-            console.log('[Download-DBG] download-started sent (setImmediate)');
-          }
-        });
       }
 
       item.on('updated', (e, state) => {
@@ -623,7 +564,6 @@ function resizeBrowserView(view) {
 }
 
 function setupBrowserViewEvents(view, tabId) {
-  console.log('[Download-DBG] setupBrowserViewEvents called for tabId:', tabId);
   view.webContents.on('did-navigate', (_e, navUrl) => {
     mainWindow.webContents.send('tab-navigated', { tabId, url: navUrl });
   });
@@ -651,28 +591,12 @@ function setupBrowserViewEvents(view, tabId) {
   });
 
   // Downloads handling - используем session-level обработчик
-  console.log('[Download-DBG] Setting up will-download listener for tabId:', tabId);
   view.webContents.session.on('will-download', (event, item) => {
-    console.log('[Download-DBG] ★★★ SESSION will-download EVENT FIRED ★★★ for tabId:', tabId, 'item:', item.getFilename());
-    console.log('[Download-DBG] mainWindow webContents isReady:', mainWindow?.webContents?.isLoading?.() === false ? 'ready' : 'not ready');
     try {
       const downloadId = `dl-${++downloadIdCounter}`;
       const filename = item.getFilename();
       const url = item.getURL();
       const totalBytes = item.getTotalBytes();
-      
-      // Если есть ожидающий путь сохранения (save-image), используем его
-      if (pendingSavePath) {
-        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] will-download: save-image detected, applying pendingSavePath:', pendingSavePath);
-        item.setSavePath(pendingSavePath);
-        dl.savePath = pendingSavePath;
-        pendingSavePath = null; // Сбрасываем после использования
-      }
-      
-      if (DOWNLOAD_DEBUG) {
-        console.log('[Download-DBG] will-download:', { filename, url, totalBytes, tabId });
-        console.log('[Download-DBG] mainWindow exists:', !!mainWindow, 'isDestroyed:', mainWindow?.isDestroyed());
-      }
 
       const dl = {
         id: downloadId,
@@ -684,29 +608,29 @@ function setupBrowserViewEvents(view, tabId) {
         state: 'progressing',
         startTime: Date.now(),
       };
+
+      // Если есть ожидающий путь сохранения (save-image), используем его
+      if (pendingSavePath) {
+        item.setSavePath(pendingSavePath);
+        dl.savePath = pendingSavePath;
+        pendingSavePath = null;
+      }
+
       downloads.set(downloadId, dl);
       saveDownloadsToFile();
-      console.log('[Download-DBG] Download added to Map. Total downloads:', downloads.size, 'Download:', dl);
 
-      console.log('[Download-DBG] About to send download-started. mainWindow:', !!mainWindow, 'isDestroyed:', mainWindow?.isDestroyed?.() || 'N/A');
       if (mainWindow && !mainWindow.isDestroyed()) {
-        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] Sending download-started event');
-        // Используем setImmediate для гарантии что событие отправится после загрузки страницы
         setImmediate(() => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('download-started', { tabId, download: dl });
-            console.log('[Download-DBG] download-started sent via setImmediate');
           }
         });
-      } else {
-        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] CANNOT send - mainWindow is null or destroyed');
       }
 
       item.on('updated', (e, state) => {
         dl.receivedBytes = item.getReceivedBytes();
         dl.totalBytes = item.getTotalBytes();
         dl.state = state === 'completed' ? 'completed' : 'progressing';
-        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] updated:', dl.receivedBytes, '/', dl.totalBytes, 'state:', state);
         if (mainWindow && !mainWindow.isDestroyed()) {
           setImmediate(() => {
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -721,7 +645,6 @@ function setupBrowserViewEvents(view, tabId) {
         dl.totalBytes = item.getTotalBytes();
         dl.state = state === 'completed' ? 'completed' : (state === 'cancelled' ? 'cancelled' : 'interrupted');
         dl.savePath = item.getSavePath();
-        if (DOWNLOAD_DEBUG) console.log('[Download-DBG] done:', filename, state, 'savePath:', dl.savePath);
         saveDownloadsToFile();
         if (mainWindow && !mainWindow.isDestroyed()) {
           setImmediate(() => {
@@ -895,15 +818,16 @@ function createBrowserView(tabId, url, extraPrefs = {}) {
     }
   });
 
-  // Log any errors during page load
+  view.webContents.on('found-in-page', (_e, result) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('find-result', { tabId, ...result });
+    }
+  });
   view.webContents.on('did-fail-load', (_e, errorCode, errorDesc) => {
-    console.log('[BrowserView] Failed to load:', errorCode, errorDesc);
+    addDebugLog('BrowserView', `Ошибка загрузки: ${errorCode} ${errorDesc}`, 'error');
   });
   view.webContents.on('render-process-gone', (_e, details) => {
-    console.log('[BrowserView] Render process gone:', details.reason);
-  });
-  view.webContents.on('crashed', () => {
-    console.log('[BrowserView] Renderer crashed');
+    addDebugLog('BrowserView', `Процесс рендеринга завершился: ${details.reason}`, 'error');
   });
   
   // BrowserView использует системные настройки прокси, которые могут быть недоступны.
@@ -913,14 +837,7 @@ function createBrowserView(tabId, url, extraPrefs = {}) {
   browserViews.set(tabId, view);
   setupBrowserViewEvents(view, tabId);
 
-  // Skip loading for internal URLs (intra://)
-  if (url && url.startsWith('intra://')) {
-    console.log('[BrowserView] Skipping internal URL:', url);
-    return view;
-  }
-  
-  if (url && url !== 'intra://home') {
-    console.log('[BrowserView] Loading URL:', url);
+  if (url && !url.startsWith('intra://')) {
     view.webContents.loadURL(url);
   }
 
@@ -1044,10 +961,7 @@ ipcMain.handle('get-current-url', (_event, { tabId }) => {
 });
 
 // Debug logs IPC
-ipcMain.handle('get-debug-logs', () => {
-  console.log('[get-debug-logs] Returning', debugLogs.length, 'logs');
-  return debugLogs;
-});
+ipcMain.handle('get-debug-logs', () => debugLogs);
 
 ipcMain.handle('run-diagnostics', async (_event, { type, tests }) => {
   const results = [];
@@ -1127,23 +1041,15 @@ ipcMain.handle('ai-set-params', (_event, { temperature, topP }) => {
 ipcMain.handle('ai-load-model', async (_event, { modelPath, serverPath, contextSize, gpuLayers }) => {
   await unloadAiModel();
   const mdlPath = path.normalize(modelPath);
-  // Use serverPath only if it's a non-empty string pointing to an existing file
   const srvPath = serverPath ? path.normalize(serverPath) : '';
-  console.log('[AI] Загрузка модели:', mdlPath);
 
   // Fallback to bundled binary — try several locations in priority order
   const srvCandidates = [
-    // 1. Packaged app: extraResources lands in process.resourcesPath
     path.join(process.resourcesPath || '', 'llama server', 'llama-server.exe'),
-    // 2. Packaged app alternative: resources/ next to the exe
     path.join(path.dirname(app.getPath('exe')), 'resources', 'llama server', 'llama-server.exe'),
-    // 3. Dev / unpacked: next to main.js (__dirname)
     path.join(__dirname, 'llama server', 'llama-server.exe'),
   ];
   const bundledSrv = srvCandidates.find(p => fs.existsSync(p)) || srvCandidates[0];
-  console.log('[AI] isDev:', isDev, '| resourcesPath:', process.resourcesPath);
-  console.log('[AI] llama-server search paths:', srvCandidates);
-  console.log('[AI] resolved bundledSrv:', bundledSrv, '| exists:', fs.existsSync(bundledSrv));
 
   const isValidSrv = srvPath && srvPath !== '.' && srvPath !== mdlPath
     && !srvPath.toLowerCase().endsWith('.gguf') && fs.existsSync(srvPath);
@@ -1157,12 +1063,9 @@ ipcMain.handle('ai-load-model', async (_event, { modelPath, serverPath, contextS
     return { success: false, error: `llama-server не найден.\nПроверенные пути:\n${srvCandidates.join('\n')}` };
 
   const port = await getFreePort();
-  console.log('[AI] Запуск llama-server на порту', port);
 
   return new Promise((resolve) => {
     let resolved = false;
-
-    console.log('[AI] Бинарник:', resolvedSrv);
     let proc;
     try {
       const srvDir = path.dirname(resolvedSrv);
@@ -1192,7 +1095,6 @@ ipcMain.handle('ai-load-model', async (_event, { modelPath, serverPath, contextS
       llamaServerPort = port;
       llamaContextSize = contextSize || 4096;
       aiCurrentModelName = path.basename(mdlPath);
-      console.log('[AI] Сервер готов:', aiCurrentModelName);
       resolve({ success: true });
     };
 
@@ -2408,9 +2310,13 @@ ipcMain.on('ai-abort-provider', () => {
 });
 
 ipcMain.handle('open-devtools', () => {
-  if (!activeTabId) return;
-  const view = browserViews.get(activeTabId);
-  if (view) view.webContents.openDevTools({ mode: 'detach' });
+  const view = activeTabId ? browserViews.get(activeTabId) : null;
+  if (view) {
+    view.webContents.openDevTools({ mode: 'detach' });
+  } else {
+    // На домашней странице или AI-чате открываем DevTools самого интерфейса
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
 });
 
 // Forward web-page notifications from any BrowserView to the main window UI
@@ -2536,15 +2442,15 @@ function openDebugModal() {
     return;
   }
   
-  const [winW, winH] = mainWindow.getContentSize();
+  const { x: winX, y: winY, width: winW, height: winH } = mainWindow.getBounds();
   const modalW = 900;
   const modalH = 650;
-  
+
   debugModalWin = new BrowserWindow({
     width: modalW,
     height: modalH,
-    x: Math.round((winW - modalW) / 2),
-    y: Math.round((winH - modalH) / 2),
+    x: Math.round(winX + (winW - modalW) / 2),
+    y: Math.round(winY + (winH - modalH) / 2),
     frame: false,
     resizable: true,
     minimizable: true,
@@ -2562,9 +2468,9 @@ function openDebugModal() {
   debugModalWin.loadFile(path.join(__dirname, 'debug-modal.html'));
   debugModalWin.once('ready-to-show', () => {
     debugModalWin.show();
-    // Send logo path to renderer
+    const { pathToFileURL } = require('url');
     debugModalWin.webContents.send('debug-modal-init', {
-      logoPath: path.join(__dirname, 'intrabrowser-logo.png')
+      logoPath: pathToFileURL(path.join(__dirname, 'intrabrowser-logo.png')).href
     });
   });
   
@@ -2622,6 +2528,7 @@ ipcMain.handle('open-browser-menu', (_e, { right, bottom }) => {
     { type: 'item', label: 'Приватная вкладка',        action: 'new-private-tab', shortcut: 'Ctrl+Shift+N',   enabled: true },
     { type: 'separator' },
     { type: 'item', label: 'Инструменты разработчика', action: 'devtools',        shortcut: 'F12',            enabled: true },
+    { type: 'item', label: 'Отладка и диагностика',    action: 'open-debug-modal',                            enabled: true },
   ], right, bottom);
 });
 
@@ -2630,11 +2537,10 @@ app.on('before-quit', async () => {
 });
 
 // Downloads IPC
-ipcMain.handle('get-downloads', () => {
-  const result = { success: true, downloads: Array.from(downloads.values()) };
-  console.log('[MAIN-DBG] get-downloads called, returning:', result.downloads.length, 'downloads');
-  return result;
-});
+ipcMain.handle('get-downloads', () => ({
+  success: true,
+  downloads: Array.from(downloads.values())
+}));
 
 ipcMain.handle('clear-downloads', () => {
   downloads.clear();
@@ -2715,6 +2621,60 @@ ipcMain.handle('ai-history-new-session', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Browser features: Find in Page, Zoom, Mute
+// ─────────────────────────────────────────────────────────────────────────────
+
+ipcMain.handle('find-in-page', (_event, { tabId, text, forward, findNext }) => {
+  const view = browserViews.get(tabId);
+  if (!view || !text) return;
+  view.webContents.findInPage(text, { forward: forward !== false, findNext: !!findNext });
+});
+
+ipcMain.handle('stop-find', (_event, { tabId, action }) => {
+  const view = browserViews.get(tabId);
+  if (!view) return;
+  view.webContents.stopFindInPage(action || 'clearSelection');
+});
+
+ipcMain.handle('zoom-in', (_event, { tabId }) => {
+  const view = browserViews.get(tabId);
+  if (!view) return;
+  view.webContents.setZoomLevel(Math.min(view.webContents.getZoomLevel() + 0.5, 5));
+  return { zoomLevel: view.webContents.getZoomLevel() };
+});
+
+ipcMain.handle('zoom-out', (_event, { tabId }) => {
+  const view = browserViews.get(tabId);
+  if (!view) return;
+  view.webContents.setZoomLevel(Math.max(view.webContents.getZoomLevel() - 0.5, -5));
+  return { zoomLevel: view.webContents.getZoomLevel() };
+});
+
+ipcMain.handle('zoom-reset', (_event, { tabId }) => {
+  const view = browserViews.get(tabId);
+  if (!view) return;
+  view.webContents.setZoomLevel(0);
+  return { zoomLevel: 0 };
+});
+
+ipcMain.handle('get-zoom', (_event, { tabId }) => {
+  const view = browserViews.get(tabId);
+  return { zoomLevel: view ? view.webContents.getZoomLevel() : 0 };
+});
+
+ipcMain.handle('set-tab-muted', (_event, { tabId, muted }) => {
+  const view = browserViews.get(tabId);
+  if (!view) return { success: false };
+  view.webContents.setAudioMuted(muted);
+  return { success: true };
+});
+
+ipcMain.handle('get-tab-muted', (_event, { tabId }) => {
+  const view = browserViews.get(tabId);
+  return { muted: view ? view.webContents.isAudioMuted() : false };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Интрасеть (intraset-network) IPC
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2783,19 +2743,111 @@ ipcMain.handle('intra-send-message', async (_event, { receiverId, content }) => 
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.handle('intra-get-contacts', async () => {
+  try {
+    const res = await fetch('http://localhost:3847/api/messages/contacts');
+    return await res.json();
+  } catch (e) {
+    return { error: e.message, contacts: [] };
+  }
+});
+
+ipcMain.handle('intra-delete-node', async (_event, { nodeId }) => {
+  try {
+    const res = await fetch(`http://localhost:3847/api/nodes/${nodeId}`, {
+      method: 'DELETE'
+    });
+    return await res.json();
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('intra-ping-node', async (_event, { nodeId }) => {
+  try {
+    const res = await fetch(`http://localhost:3847/api/nodes/${nodeId}/ping`);
+    return await res.json();
+  } catch (e) {
+    return { reachable: false, error: e.message };
+  }
+});
+
+ipcMain.handle('intra-delete-file', async (_event, { fileId }) => {
+  try {
+    const res = await fetch(`http://localhost:3847/api/files/${fileId}`, {
+      method: 'DELETE'
+    });
+    return await res.json();
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('intra-upload-file', async (_event, { filePath }) => {
+  try {
+    const formData = new FormData();
+    const fileBuffer = require('fs').readFileSync(filePath);
+    const fileName = require('path').basename(filePath);
+    const blob = new Blob([fileBuffer]);
+    formData.append('file', blob, fileName);
+    
+    const res = await fetch('http://localhost:3847/api/files/upload', {
+      method: 'POST',
+      body: formData
+    });
+    return await res.json();
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('intra-download-file', async (_event, { fileId, fileName }) => {
+  try {
+    const { dialog, shell } = require('electron');
+    const result = await dialog.showSaveDialog({
+      title: 'Сохранить файл',
+      defaultPath: fileName
+    });
+    
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+    
+    const res = await fetch(`http://localhost:3847/api/files/${fileId}`);
+    const buffer = await res.buffer();
+    require('fs').writeFileSync(result.filePath, buffer);
+    
+    return { success: true, path: result.filePath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
-  console.log('[MAIN] App ready, loading downloads...');
-  loadDownloadsFromFile();
-  createMainWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Блокировка одного экземпляра: если уже запущен — фокусируем его и выходим
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
   });
-});
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+  app.whenReady().then(() => {
+    loadDownloadsFromFile();
+    createMainWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+}

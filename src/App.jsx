@@ -165,7 +165,7 @@ function AppTabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab }) {
 
 export default function App() {
   const [tabs, setTabs] = useState(() => [createTab()]);
-  const [activeTabId, setActiveTabId] = useState(null);
+  const [activeTabId, setActiveTabId] = useState(() => tabs[0].id);
   const [addressBarValue, setAddressBarValue] = useState('');
   const [intranetOnly, setIntranetOnly] = useState(false);
   const [searchEngine, setSearchEngineState] = useState(() => localStorage.getItem('intra-search-engine') || 'yandex');
@@ -174,6 +174,19 @@ export default function App() {
   const [sidebarSelectionReq, setSidebarSelectionReq] = useState(null);
   const [forceSidebarAiPanel, setForceSidebarAiPanel] = useState(false);
   const menuBtnRef = React.useRef(null);
+  const addressBarRef = React.useRef(null);
+
+  // Find in page state
+  const [findBarOpen, setFindBarOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findResult, setFindResult] = useState(null); // { activeMatchOrdinal, matches }
+  const findInputRef = React.useRef(null);
+
+  // Zoom state per-tab
+  const [tabZoom, setTabZoom] = useState({}); // tabId -> zoomLevel
+
+  // Tab mute state
+  const [tabMuted, setTabMuted] = useState({}); // tabId -> boolean
 
   const setSearchEngine = (engine) => {
     setSearchEngineState(engine);
@@ -205,9 +218,71 @@ export default function App() {
 
   useEffect(() => {
     const firstTab = tabs[0];
-    setActiveTabId(firstTab.id);
     if (isElectron) window.electronAPI.createTab(firstTab.id, firstTab.url);
   }, []); // eslint-disable-line
+
+  // Find in page result listener
+  useEffect(() => {
+    if (!isElectron) return;
+    const off = window.electronAPI.onFindResult?.((data) => {
+      if (data.tabId === activeTabId) {
+        setFindResult({ active: data.activeMatchOrdinal, total: data.matches });
+      }
+    }) ?? (() => {});
+    return off;
+  }, [activeTabId]); // eslint-disable-line
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const isMac = navigator.platform.includes('Mac');
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (!mod) {
+        if (e.key === 'F5') { e.preventDefault(); handleReload(); }
+        if (e.key === 'F3' && findBarOpen) { e.preventDefault(); handleFindNext(true); }
+        if (e.key === 'Escape' && findBarOpen) { closeFindBar(); }
+        return;
+      }
+      switch (e.key.toLowerCase()) {
+        case 't': e.preventDefault(); handleNewTab(); break;
+        case 'w': e.preventDefault(); handleCloseTab(activeTabId); break;
+        case 'r': e.preventDefault(); handleReload(); break;
+        case 'f': {
+          const tab = tabs.find(t => t.id === activeTabId);
+          if (tab && !tab.isHome && !tab.isAiChat && !tab.isBlocked) {
+            e.preventDefault();
+            setFindBarOpen(v => !v);
+            if (!findBarOpen) setTimeout(() => findInputRef.current?.focus(), 50);
+          }
+          break;
+        }
+        case 'l': e.preventDefault(); addressBarRef.current?.focus(); addressBarRef.current?.select(); break;
+        case '=': case '+': { e.preventDefault(); handleZoomIn(); break; }
+        case '-': e.preventDefault(); handleZoomOut(); break;
+        case '0': e.preventDefault(); handleZoomReset(); break;
+        case 'tab': {
+          e.preventDefault();
+          const idx = tabs.findIndex(t => t.id === activeTabId);
+          const next = e.shiftKey
+            ? tabs[(idx - 1 + tabs.length) % tabs.length]
+            : tabs[(idx + 1) % tabs.length];
+          handleSwitchTab(next.id);
+          break;
+        }
+      }
+      if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); handleGoBack(); }
+      if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); handleGoForward(); }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [activeTabId, tabs, findBarOpen]); // eslint-disable-line
+
+  useEffect(() => {
+    const root = document.getElementById('root');
+    const loader = document.getElementById('loader');
+    if (root) root.classList.add('app-ready');
+    if (loader) loader.classList.add('hidden');
+  }, []);
 
   useEffect(() => {
     const tab = tabs.find(t => t.id === activeTabId);
@@ -417,6 +492,57 @@ export default function App() {
     if (isElectron) window.electronAPI.openDevTools?.();
   }, []);
 
+  // ── Find in page ────────────────────────────────────────────────────────────
+  const handleFindNext = useCallback((forward = true) => {
+    if (!isElectron || !findQuery.trim()) return;
+    window.electronAPI.findInPage(activeTabId, findQuery, { forward, findNext: true });
+  }, [activeTabId, findQuery]);
+
+  const closeFindBar = useCallback(() => {
+    setFindBarOpen(false);
+    setFindQuery('');
+    setFindResult(null);
+    if (isElectron) window.electronAPI.stopFind(activeTabId, 'clearSelection');
+  }, [activeTabId]);
+
+  const handleFindChange = useCallback((text) => {
+    setFindQuery(text);
+    setFindResult(null);
+    if (!isElectron) return;
+    if (text.trim()) {
+      window.electronAPI.findInPage(activeTabId, text, { forward: true, findNext: false });
+    } else {
+      window.electronAPI.stopFind(activeTabId, 'clearSelection');
+    }
+  }, [activeTabId]);
+
+  // ── Zoom ────────────────────────────────────────────────────────────────────
+  const handleZoomIn = useCallback(async () => {
+    if (!isElectron) return;
+    const res = await window.electronAPI.zoomIn(activeTabId);
+    if (res) setTabZoom(prev => ({ ...prev, [activeTabId]: res.zoomLevel }));
+  }, [activeTabId]);
+
+  const handleZoomOut = useCallback(async () => {
+    if (!isElectron) return;
+    const res = await window.electronAPI.zoomOut(activeTabId);
+    if (res) setTabZoom(prev => ({ ...prev, [activeTabId]: res.zoomLevel }));
+  }, [activeTabId]);
+
+  const handleZoomReset = useCallback(async () => {
+    if (!isElectron) return;
+    await window.electronAPI.zoomReset(activeTabId);
+    setTabZoom(prev => ({ ...prev, [activeTabId]: 0 }));
+  }, [activeTabId]);
+
+  // ── Tab mute ────────────────────────────────────────────────────────────────
+  const handleToggleMute = useCallback(async () => {
+    if (!isElectron) return;
+    const muted = !tabMuted[activeTabId];
+    await window.electronAPI.setTabMuted(activeTabId, muted);
+    setTabMuted(prev => ({ ...prev, [activeTabId]: muted }));
+  }, [activeTabId, tabMuted]);
+
   const handleOpenAiChat = useCallback(async () => {
     const existing = tabs.find(t => t.isAiChat);
     if (existing) {
@@ -551,6 +677,43 @@ export default function App() {
             </NavBtn>
           )}
 
+          {/* Zoom controls — visible only on web pages */}
+          {activeTab && !activeTab.isHome && !activeTab.isBlocked && !activeTab.isAiChat && (() => {
+            const zoom = tabZoom[activeTabId] || 0;
+            const pct = Math.round(100 * Math.pow(1.2, zoom));
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 1, background: '#f8fafc', borderRadius: 7, border: '1px solid #e2e8f0', padding: '0 2px', flexShrink: 0 }}>
+                <NavBtn onClick={handleZoomOut} title="Уменьшить (Ctrl+-)">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M5 12h14"/></svg>
+                </NavBtn>
+                <button onClick={handleZoomReset} title="Сбросить масштаб (Ctrl+0)"
+                  style={{ fontSize: 10, fontWeight: 700, color: zoom !== 0 ? '#2563eb' : '#64748b', background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', minWidth: 32, textAlign: 'center' }}
+                >{pct}%</button>
+                <NavBtn onClick={handleZoomIn} title="Увеличить (Ctrl+=)">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                </NavBtn>
+              </div>
+            );
+          })()}
+
+          {/* Mute button */}
+          {activeTab && !activeTab.isHome && !activeTab.isBlocked && !activeTab.isAiChat && (
+            <NavBtn onClick={handleToggleMute} title={tabMuted[activeTabId] ? 'Включить звук' : 'Выключить звук'}>
+              {tabMuted[activeTabId]
+                ? <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd"/><path d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"/></svg>
+                : <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-9.536A5 5 0 005.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5z"/></svg>
+              }
+            </NavBtn>
+          )}
+
+          {/* Find in page button */}
+          {activeTab && !activeTab.isHome && !activeTab.isBlocked && !activeTab.isAiChat && (
+            <NavBtn onClick={() => { setFindBarOpen(v => !v); if (!findBarOpen) setTimeout(() => findInputRef.current?.focus(), 50); }}
+              active={findBarOpen} title="Найти на странице (Ctrl+F)">
+              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            </NavBtn>
+          )}
+
           <div style={{ display: 'flex', gap: 1, background: '#f1f5f9', borderRadius: 7, padding: 2, border: '1px solid #e2e8f0', flexShrink: 0 }}>
             {networkModes.map(m => (
               <button key={m.id} onClick={() => { if (m.id === 'intranet') setIntranetOnly(true); else if (m.id === 'internet') setIntranetOnly(false); }} style={{
@@ -605,6 +768,44 @@ export default function App() {
           })()}
 
         </div>}
+
+        {/* Find in page bar */}
+        {findBarOpen && activeTab && !activeTab.isHome && !activeTab.isBlocked && !activeTab.isAiChat && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 10px',
+            background: 'white', borderBottom: '1px solid #e2e8f0', flexShrink: 0
+          }}>
+            <input
+              ref={findInputRef}
+              value={findQuery}
+              onChange={e => handleFindChange(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleFindNext(!e.shiftKey);
+                if (e.key === 'Escape') closeFindBar();
+              }}
+              placeholder="Найти на странице..."
+              style={{
+                flex: 1, maxWidth: 260, height: 26, padding: '0 8px', fontSize: 13,
+                border: '1px solid #cbd5e1', borderRadius: 6, outline: 'none',
+                background: '#f8fafc', color: '#1e293b'
+              }}
+            />
+            {findResult && (
+              <span style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>
+                {findResult.active}/{findResult.total}
+              </span>
+            )}
+            <NavBtn onClick={() => handleFindNext(false)} title="Предыдущее (Shift+Enter)">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M18 15l-6-6-6 6"/></svg>
+            </NavBtn>
+            <NavBtn onClick={() => handleFindNext(true)} title="Следующее (Enter)">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
+            </NavBtn>
+            <NavBtn onClick={closeFindBar} title="Закрыть (Esc)">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </NavBtn>
+          </div>
+        )}
 
         {!activeTab?.isAiChat && activeTab?.isBlocked && (
           <BlockedPage
