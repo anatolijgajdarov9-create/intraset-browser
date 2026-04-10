@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx *)",
+      "Bash(npm install)",
+      "Bash(mkdir *)",
+      "Bash(npm run *)",
+      "Bash(where *)",
+      "Bash(dir *)",
+      "Bash(taskkill *)",
+      "Bash(timeout *)",
+      "Bash(start *)",
+      "Bash(tasklist)",
+      "Bash(findstr *)",
+      "Bash(gradlew.bat *)",
+      "Bash(java *)",
+      "Bash(powershell *)",
+      "Bash(winget *)",
+      "Bash(cmd *)",
+      "Bash(set *)",
+      "Bash(adb *)",
+      "Bash(node *)",
+      "Bash(rmdir *)",
+      "Bash(del *)",
+      "Bash(curl *)"
+    ]
+  },
+  "$version": 3
+}
