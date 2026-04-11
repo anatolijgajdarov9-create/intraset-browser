@@ -5,9 +5,11 @@ import { View, ActivityIndicator, Text } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import { useSettingsStore } from './src/store/settingsStore';
 import { useTabStore } from './src/store/tabStore';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 export default function App() {
   const loadSettings = useSettingsStore(state => state.loadSettings);
+  const darkMode = useSettingsStore(state => state.settings.darkMode);
   const initActiveTabId = useTabStore(state => state.initActiveTabId);
   const tabs = useTabStore(state => state.tabs);
   const [isReady, setIsReady] = useState(false);
@@ -45,8 +47,10 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <AppNavigator />
-      <StatusBar style="auto" />
+      <ErrorBoundary>
+        <AppNavigator />
+      </ErrorBoundary>
+      <StatusBar style={darkMode ? 'light' : 'dark'} />
     </SafeAreaProvider>
   );
 }

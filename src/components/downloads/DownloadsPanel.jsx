@@ -1,21 +1,57 @@
+import React, { useRef, useEffect, useState } from 'react';
 import { useDownloads } from '../../hooks/useDownloads.jsx';
 import DownloadItem from './DownloadItem';
 import EmptyState from './EmptyState';
 
-export default function DownloadsPanel({ onClose }) {
-  const {
-    downloads,
-    isLoading,
-    removeDownload,
-    clearDownloads,
-    cancelDownload,
-    getDownloadSpeed,
-    totalCount,
-    activeCount
-  } = useDownloads();
+export default function DownloadsPanel({
+  downloads: propDownloads,
+  onClose,
+  onClearDownloads: propClear,
+  onCancelDownload: propCancel,
+  onRemoveDownload: propRemove,
+  onShowInFolder,
+}) {
+  // If props are provided, use them; otherwise fall back to the hook
+  const hookData = !propDownloads ? useDownloads() : null;
+
+  const downloads = propDownloads || hookData?.downloads || [];
+  const isLoading = hookData?.isLoading ?? false;
+  const removeDownload = propRemove || hookData?.removeDownload || (() => {});
+  const clearDownloads = propClear || hookData?.clearDownloads || (() => {});
+  const cancelDownload = propCancel || hookData?.cancelDownload || (() => {});
+
+  // Local speed tracking for prop-based mode
+  const speedCache = useRef(new Map());
+  const lastUpdateRef = useRef(new Map());
+
+  useEffect(() => {
+    const now = Date.now();
+    downloads.forEach(dl => {
+      if (dl.state === 'progressing') {
+        const last = lastUpdateRef.current.get(dl.id);
+        if (last && dl.totalBytes > 0) {
+          const deltaTime = (now - last.time) / 1000;
+          const deltaBytes = dl.receivedBytes - last.received;
+          if (deltaTime > 0 && deltaBytes > 0) {
+            speedCache.current.set(dl.id, deltaBytes / deltaTime);
+          }
+        }
+        lastUpdateRef.current.set(dl.id, { time: now, received: dl.receivedBytes });
+      } else {
+        lastUpdateRef.current.delete(dl.id);
+      }
+    });
+  }, [downloads]);
+
+  const getSpeed = hookData?.getDownloadSpeed || ((id) => speedCache.current.get(id) || 0);
+
+  const totalCount = downloads.length;
+  const activeCount = downloads.filter(d => d.state === 'progressing').length;
 
   const handleOpenFolder = (downloadId) => {
-    if (window.electronAPI?.showInFolder) {
+    if (onShowInFolder) {
+      onShowInFolder(downloadId);
+    } else if (window.electronAPI?.showInFolder) {
       window.electronAPI.showInFolder(downloadId);
     }
   };

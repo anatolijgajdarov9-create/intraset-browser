@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -8,7 +8,7 @@ import {
   Alert,
   Share,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
@@ -25,6 +25,19 @@ export default function DownloadsScreen() {
   const [downloads, setDownloads] = useState([]);
 
   useEffect(() => { loadDownloads(); }, []);
+
+  // Перечитываем список при каждом возврате на экран
+  useFocusEffect(
+    useCallback(() => { loadDownloads(); }, [])
+  );
+
+  // Опрашиваем хранилище каждые 2 сек пока есть незавершённые загрузки
+  useEffect(() => {
+    const hasInProgress = downloads.some(d => d.status === 'downloading');
+    if (!hasInProgress) return;
+    const timer = setInterval(loadDownloads, 2000);
+    return () => clearInterval(timer);
+  }, [downloads]);
 
   const loadDownloads = async () => {
     const data = await getDownloads();
@@ -143,27 +156,41 @@ export default function DownloadsScreen() {
     return map[ext] || 'document-outline';
   };
 
-  const renderDownload = ({ item }) => (
-    <TouchableOpacity
-      style={styles.downloadItem}
-      onPress={() => handleOpenFile(item)}
-      onLongPress={() => handleDelete(item.id)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.fileIcon}>
-        <Ionicons name={getFileIcon(item.filename)} size={24} color={theme.primary} />
-      </View>
-      <View style={styles.fileInfo}>
-        <Text style={styles.fileName} numberOfLines={1}>{item.filename}</Text>
-        <Text style={styles.fileMeta}>
-          {formatFileSize(item.size)} · {formatDate(item.date)}
-        </Text>
-      </View>
-      <TouchableOpacity style={styles.shareButton} onPress={() => handleShareFile(item)}>
-        <Ionicons name="share-outline" size={20} color={theme.primary} />
+  const renderDownload = ({ item }) => {
+    const isDownloading = item.status === 'downloading';
+    const isFailed = item.status === 'failed';
+    return (
+      <TouchableOpacity
+        style={[styles.downloadItem, isFailed && styles.downloadItemFailed]}
+        onPress={() => !isDownloading && handleOpenFile(item)}
+        onLongPress={() => handleDelete(item.id)}
+        activeOpacity={isDownloading ? 1 : 0.7}
+      >
+        <View style={[styles.fileIcon, isDownloading && styles.fileIconDownloading, isFailed && styles.fileIconFailed]}>
+          <Ionicons
+            name={isFailed ? 'alert-circle-outline' : isDownloading ? 'cloud-download-outline' : getFileIcon(item.filename)}
+            size={24}
+            color={isFailed ? theme.error : isDownloading ? theme.textSecondary : theme.primary}
+          />
+        </View>
+        <View style={styles.fileInfo}>
+          <Text style={styles.fileName} numberOfLines={1}>{item.filename}</Text>
+          <Text style={[styles.fileMeta, isFailed && { color: theme.error }]}>
+            {isDownloading
+              ? 'Загружается...'
+              : isFailed
+                ? 'Ошибка загрузки'
+                : `${formatFileSize(item.size)} · ${formatDate(item.date)}`}
+          </Text>
+        </View>
+        {!isDownloading && (
+          <TouchableOpacity style={styles.shareButton} onPress={() => isFailed ? handleDelete(item.id) : handleShareFile(item)}>
+            <Ionicons name={isFailed ? 'trash-outline' : 'share-outline'} size={20} color={isFailed ? theme.error : theme.primary} />
+          </TouchableOpacity>
+        )}
       </TouchableOpacity>
-    </TouchableOpacity>
-  );
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -244,6 +271,11 @@ const makeStyles = (theme, insets) => StyleSheet.create({
     backgroundColor: theme.backgroundSecondary,
     borderRadius: SIZES.radiusLg,
   },
+  downloadItemFailed: {
+    opacity: 0.8,
+    borderWidth: 1,
+    borderColor: theme.error,
+  },
   fileIcon: {
     width: 44,
     height: 44,
@@ -252,6 +284,12 @@ const makeStyles = (theme, insets) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: SIZES.paddingMd,
+  },
+  fileIconDownloading: {
+    backgroundColor: theme.backgroundTertiary,
+  },
+  fileIconFailed: {
+    backgroundColor: '#fee2e2',
   },
   fileInfo: {
     flex: 1,

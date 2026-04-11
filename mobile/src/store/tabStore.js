@@ -7,7 +7,7 @@ const newTabId = () => `tab-${tabIdCounter++}`;
 const TABS_KEY = 'intra-tabs';
 
 /**
- * Сохранить вкладки в AsyncStorage
+ * Сохранить вкладки в AsyncStorage (немедленно — для критичных операций)
  */
 async function persistTabs(tabs) {
   try {
@@ -15,6 +15,18 @@ async function persistTabs(tabs) {
   } catch (e) {
     console.error('[TabStore] Error persisting tabs:', e);
   }
+}
+
+/**
+ * Debounced сохранение — для частых обновлений (url, title, favicon, navState)
+ */
+let persistTimer = null;
+function schedulePersist(tabs) {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    AsyncStorage.setItem(TABS_KEY, JSON.stringify(tabs))
+      .catch(e => console.error('[TabStore] Error scheduling persist:', e));
+  }, 500);
 }
 
 /**
@@ -46,17 +58,39 @@ export const useTabStore = create((set, get) => ({
   // Mute состояние по вкладке
   tabMuted: {},
 
+  // Недавно закрытые вкладки (только на сессию, не персистируются)
+  recentlyClosed: [],
+
+  // Флаг «показываем домашний экран поверх реального URL» (не персистируется)
+  // { [tabId]: boolean }
+  tabHomeOverlay: {},
+
   // ─── Действия ──────────────────────────────────────────────────────────
 
   // Инициализация — загрузка вкладок из AsyncStorage
   initActiveTabId: async () => {
     const savedTabs = await loadTabs();
-    
-    if (savedTabs && savedTabs.length > 0) {
+
+    // Валидация и санитизация загруженных данных
+    const validTabs = (savedTabs || [])
+      .filter(t => t && typeof t.id === 'string' && typeof t.url === 'string')
+      .map(t => ({
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        isPrivate: false,
+        favicon: null,
+        isHome: t.url === 'intra://home',
+        ...t,
+        // Сбрасываем транзиентные состояния
+        loading: false,
+      }));
+
+    if (validTabs.length > 0) {
       // Восстанавливаем вкладки
-      set({ tabs: savedTabs, activeTabId: savedTabs[0].id });
+      set({ tabs: validTabs, activeTabId: validTabs[0].id });
       // Восстанавливаем счётчик
-      const maxId = Math.max(...savedTabs.map(t => parseInt(t.id.split('-')[1]) || 0));
+      const maxId = Math.max(...validTabs.map(t => parseInt(t.id.split('-')[1]) || 0));
       tabIdCounter = maxId + 1;
     } else {
       // Создаём новую домашнюю вкладку
@@ -102,7 +136,17 @@ export const useTabStore = create((set, get) => ({
   
   // Закрыть вкладку
   closeTab: (tabId) => {
-    const { tabs, activeTabId } = get();
+    const { tabs, activeTabId, recentlyClosed } = get();
+
+    // Сохраняем в "недавно закрытые" (только не-домашние и не-приватные)
+    const closingTab = tabs.find(t => t.id === tabId);
+    let newRecentlyClosed = recentlyClosed;
+    if (closingTab && closingTab.url !== 'intra://home' && !closingTab.isPrivate) {
+      newRecentlyClosed = [
+        { url: closingTab.url, title: closingTab.title, favicon: closingTab.favicon, closedAt: Date.now() },
+        ...recentlyClosed,
+      ].slice(0, 10);
+    }
 
     // Если это последняя вкладка — создаём новую домашнюю
     if (tabs.length === 1) {
@@ -119,7 +163,7 @@ export const useTabStore = create((set, get) => ({
         isBlank: false,
       };
       persistTabs([newTab]);
-      set({ tabs: [newTab], activeTabId: newTab.id });
+      set({ tabs: [newTab], activeTabId: newTab.id, recentlyClosed: newRecentlyClosed });
       return newTab;
     }
 
@@ -134,9 +178,39 @@ export const useTabStore = create((set, get) => ({
     }
 
     persistTabs(newTabs);
-    set({ tabs: newTabs, activeTabId: newActiveId });
+    set({ tabs: newTabs, activeTabId: newActiveId, recentlyClosed: newRecentlyClosed });
+  },
+
+  // Восстановить недавно закрытую вкладку
+  restoreTab: (closedEntry) => {
+    const tab = {
+      id: newTabId(),
+      url: closedEntry.url,
+      title: closedEntry.title || closedEntry.url,
+      favicon: closedEntry.favicon || null,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      isHome: false,
+      isPrivate: false,
+      isBlank: false,
+    };
+    set(state => {
+      const newTabs = [...state.tabs, tab];
+      const newRecentlyClosed = state.recentlyClosed.filter(r => r.closedAt !== closedEntry.closedAt);
+      persistTabs(newTabs);
+      return { tabs: newTabs, activeTabId: tab.id, recentlyClosed: newRecentlyClosed };
+    });
+    return tab;
   },
   
+  // Установить / снять домашний оверлей для вкладки (без изменения URL)
+  setTabHomeOverlay: (tabId, value) => {
+    set(state => ({
+      tabHomeOverlay: { ...state.tabHomeOverlay, [tabId]: value },
+    }));
+  },
+
   // Переключить активную вкладку
   switchTab: (tabId) => {
     set({ activeTabId: tabId });
@@ -150,7 +224,7 @@ export const useTabStore = create((set, get) => ({
           ? { ...t, url, isHome: url === 'intra://home' }
           : t
       );
-      persistTabs(newTabs);
+      schedulePersist(newTabs);
       return { tabs: newTabs };
     });
   },
@@ -161,7 +235,7 @@ export const useTabStore = create((set, get) => ({
       const newTabs = state.tabs.map(t =>
         t.id === tabId ? { ...t, title } : t
       );
-      persistTabs(newTabs);
+      schedulePersist(newTabs);
       return { tabs: newTabs };
     });
   },
@@ -172,20 +246,16 @@ export const useTabStore = create((set, get) => ({
       const newTabs = state.tabs.map(t =>
         t.id === tabId ? { ...t, favicon } : t
       );
-      persistTabs(newTabs);
+      schedulePersist(newTabs);
       return { tabs: newTabs };
     });
   },
 
-  // Обновить состояние загрузки
+  // Обновить состояние загрузки (транзиентное — не сохраняем)
   updateTabLoading: (tabId, loading) => {
-    set(state => {
-      const newTabs = state.tabs.map(t =>
-        t.id === tabId ? { ...t, loading } : t
-      );
-      persistTabs(newTabs);
-      return { tabs: newTabs };
-    });
+    set(state => ({
+      tabs: state.tabs.map(t => t.id === tabId ? { ...t, loading } : t),
+    }));
   },
 
   // Обновить навигационные состояния
@@ -194,7 +264,7 @@ export const useTabStore = create((set, get) => ({
       const newTabs = state.tabs.map(t =>
         t.id === tabId ? { ...t, canGoBack, canGoForward } : t
       );
-      persistTabs(newTabs);
+      schedulePersist(newTabs);
       return { tabs: newTabs };
     });
   },

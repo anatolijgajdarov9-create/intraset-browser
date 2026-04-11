@@ -12,47 +12,127 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { getHistory, clearHistory } from '../utils/storage';
+import { getHistory, clearHistory, removeHistoryEntry } from '../utils/storage';
+import * as Haptics from 'expo-haptics';
 import { useTabStore } from '../store/tabStore';
 import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
+
+function groupByDate(items) {
+  const groups = {};
+  items.forEach(item => {
+    const key = new Date(item.timestamp).toLocaleDateString('ru-RU', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  });
+  return groups;
+}
+
+function HistoryItemRow({ item, onPress, onDelete, styles, theme }) {
+  const [faviconError, setFaviconError] = useState(false);
+
+  return (
+    <TouchableOpacity
+      style={styles.historyItem}
+      onPress={() => onPress(item.url)}
+      onLongPress={() => onDelete(item)}
+      activeOpacity={0.7}
+      delayLongPress={400}
+    >
+      <View style={styles.historyIcon}>
+        {item.favicon && !faviconError ? (
+          <Image
+            source={{ uri: item.favicon }}
+            style={styles.favicon}
+            onError={() => setFaviconError(true)}
+          />
+        ) : (
+          <View style={styles.faviconPlaceholder}>
+            <Text style={styles.faviconText}>
+              {item.title?.charAt(0).toUpperCase() || '?'}
+            </Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.historyInfo}>
+        <Text style={styles.historyTitle} numberOfLines={1}>
+          {item.title || item.url}
+        </Text>
+        <Text style={styles.historyUrl} numberOfLines={1}>{item.url}</Text>
+      </View>
+      <Text style={styles.historyTime}>{formatTime(item.timestamp)}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const formatTime = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  const now = new Date();
+  const days = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+  if (days === 0) return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (days === 1) return 'Вчера';
+  if (days < 7) return date.toLocaleDateString('ru-RU', { weekday: 'short' });
+  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+};
 
 export default function HistoryScreen() {
   const navigation = useNavigation();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(theme, insets), [theme, insets]);
-  const { createTab } = useTabStore();
+  // useTabStore нужен только через getState() в handleOpen
 
   const [history, setHistory] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredHistory, setFilteredHistory] = useState([]);
+
+  const filteredHistory = useMemo(() => {
+    if (!searchQuery.trim()) return history;
+    const query = searchQuery.toLowerCase();
+    return history.filter(item =>
+      item.title?.toLowerCase().includes(query) ||
+      item.url?.toLowerCase().includes(query)
+    );
+  }, [searchQuery, history]);
+
+  const groupedHistory = useMemo(
+    () => Object.entries(groupByDate(filteredHistory)),
+    [filteredHistory]
+  );
 
   useEffect(() => { loadHistory(); }, []);
-
-  useEffect(() => {
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      setFilteredHistory(
-        history.filter(item =>
-          item.title?.toLowerCase().includes(query) ||
-          item.url?.toLowerCase().includes(query)
-        )
-      );
-    } else {
-      setFilteredHistory(history);
-    }
-  }, [searchQuery, history]);
 
   const loadHistory = async () => {
     const data = await getHistory();
     setHistory(data);
-    setFilteredHistory(data);
   };
 
   const handleOpen = (url) => {
-    createTab(url, 'Вкладка');
+    // Навигация в текущей вкладке (не открываем новую)
+    const { activeTabId, updateTabUrl, setTabHomeOverlay } = useTabStore.getState();
+    setTabHomeOverlay(activeTabId, false);
+    updateTabUrl(activeTabId, url);
     navigation.goBack();
+  };
+
+  const handleDeleteEntry = (item) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      'Удалить запись?',
+      item.title || item.url,
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить', style: 'destructive',
+          onPress: async () => {
+            await removeHistoryEntry(item.id);
+            await loadHistory();
+          },
+        },
+      ]
+    );
   };
 
   const handleClearHistory = () => {
@@ -72,63 +152,21 @@ export default function HistoryScreen() {
     );
   };
 
-  const formatTime = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const days = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-    if (days === 0) return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    if (days === 1) return 'Вчера';
-    if (days < 7) return date.toLocaleDateString('ru-RU', { weekday: 'short' });
-    return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-  };
-
-  const groupByDate = (items) => {
-    const groups = {};
-    items.forEach(item => {
-      const key = new Date(item.timestamp).toLocaleDateString('ru-RU', {
-        day: 'numeric', month: 'long', year: 'numeric',
-      });
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(item);
-    });
-    return groups;
-  };
-
   const renderSection = ({ item: [date, items] }) => (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{date}</Text>
       {items.map((item) => (
-        <TouchableOpacity
+        <HistoryItemRow
           key={item.id}
-          style={styles.historyItem}
-          onPress={() => handleOpen(item.url)}
-          activeOpacity={0.7}
-        >
-          <View style={styles.historyIcon}>
-            {item.favicon ? (
-              <Image source={{ uri: item.favicon }} style={styles.favicon} />
-            ) : (
-              <View style={styles.faviconPlaceholder}>
-                <Text style={styles.faviconText}>
-                  {item.title?.charAt(0).toUpperCase() || '?'}
-                </Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.historyInfo}>
-            <Text style={styles.historyTitle} numberOfLines={1}>
-              {item.title || item.url}
-            </Text>
-            <Text style={styles.historyUrl} numberOfLines={1}>{item.url}</Text>
-          </View>
-          <Text style={styles.historyTime}>{formatTime(item.timestamp)}</Text>
-        </TouchableOpacity>
+          item={item}
+          onPress={handleOpen}
+          onDelete={handleDeleteEntry}
+          styles={styles}
+          theme={theme}
+        />
       ))}
     </View>
   );
-
-  const groupedHistory = Object.entries(groupByDate(filteredHistory));
 
   return (
     <View style={styles.container}>

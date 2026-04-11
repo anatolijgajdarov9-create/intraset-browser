@@ -86,6 +86,13 @@ export async function isBookmarked(url) {
   return bookmarks.some(b => b.url === url);
 }
 
+export async function removeBookmarkByUrl(url) {
+  const bookmarks = await getBookmarks();
+  const filtered = bookmarks.filter(b => b.url !== url);
+  await setBookmarks(filtered);
+  return filtered;
+}
+
 // ─── История посещений ────────────────────────────────────────────────────
 
 export async function getHistory() {
@@ -111,6 +118,13 @@ export async function clearHistory() {
   await setHistory([]);
 }
 
+export async function removeHistoryEntry(id) {
+  const history = await getHistory();
+  const filtered = history.filter(h => h.id !== id);
+  await setHistory(filtered);
+  return filtered;
+}
+
 // ─── Загрузки ─────────────────────────────────────────────────────────────
 
 export async function getDownloads() {
@@ -125,6 +139,16 @@ export async function addDownload(download) {
   const downloads = await getDownloads();
   downloads.unshift({ ...download, id: Date.now().toString(), date: Date.now() });
   await setDownloadsList(downloads);
+  return downloads;
+}
+
+export async function updateDownload(id, updates) {
+  const downloads = await getDownloads();
+  const idx = downloads.findIndex(d => d.id === id);
+  if (idx !== -1) {
+    downloads[idx] = { ...downloads[idx], ...updates };
+    await setDownloadsList(downloads);
+  }
   return downloads;
 }
 
@@ -190,12 +214,21 @@ function isTrackableUrl(url) {
 // ─── Настройки ────────────────────────────────────────────────────────────
 
 export async function getSettings() {
-  return getItem(KEYS.SETTINGS, {
+  const defaults = {
     searchEngine: 'yandex',
-    newTabMode: 'home', // 'home' | 'blank'
+    newTabMode: 'home',
     darkMode: false,
     intranetOnly: false,
-  });
+    nightMode: false,
+  };
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.SETTINGS);
+    if (!raw) return defaults;
+    // Merge: stored values override defaults, but missing keys get defaults
+    return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    return defaults;
+  }
 }
 
 export async function setSettings(settings) {

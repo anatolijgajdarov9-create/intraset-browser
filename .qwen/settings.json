@@ -22,7 +22,8 @@
       "Bash(node *)",
       "Bash(rmdir *)",
       "Bash(del *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(true)"
     ]
   },
   "$version": 3

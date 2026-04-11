@@ -11,6 +11,7 @@ export const useSettingsStore = create((set, get) => ({
     newTabMode: 'home', // 'home' | 'blank'
     darkMode: false,
     intranetOnly: false,
+    nightMode: false,   // CSS-инверсия на сайтах без тёмной темы
   },
   
   // Флаг загрузки
@@ -58,6 +59,16 @@ export const useSettingsStore = create((set, get) => ({
     await updateSetting('intranetOnly', newValue);
     set(state => ({
       settings: { ...state.settings, intranetOnly: newValue },
+    }));
+  },
+
+  // Переключить ночной режим (CSS-инверсия)
+  toggleNightMode: async () => {
+    const { settings } = get();
+    const newValue = !settings.nightMode;
+    await updateSetting('nightMode', newValue);
+    set(state => ({
+      settings: { ...state.settings, nightMode: newValue },
     }));
   },
 }));

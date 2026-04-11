@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import HomePage from './components/HomePage';
+import HistoryPage from './components/HistoryPage';
+import SettingsPage from './components/SettingsPage';
 import BlockedPage from './components/BlockedPage';
 import AiChatPage from './components/AiChatPage';
+import DownloadsPanel from './components/downloads/DownloadsPanel';
 import { isIntranetUrl } from './config/intranet';
 
 const isElectron = typeof window.electronAPI !== 'undefined';
@@ -16,6 +19,8 @@ const createTab = (url = 'intra://home', title = 'Новая вкладка', is
   canGoBack: false, canGoForward: false,
   isHome: url === 'intra://home',
   isAiChat: url === 'intra://ai-chat',
+  isHistory: url === 'intra://history',
+  isSettings: url === 'intra://settings',
   isBlocked: false, blockedUrl: null,
   isPrivate, isBlank
 });
@@ -180,6 +185,7 @@ export default function App() {
   const [findBarOpen, setFindBarOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findResult, setFindResult] = useState(null); // { activeMatchOrdinal, matches }
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const findInputRef = React.useRef(null);
 
   // Zoom state per-tab
@@ -187,6 +193,20 @@ export default function App() {
 
   // Tab mute state
   const [tabMuted, setTabMuted] = useState({}); // tabId -> boolean
+
+  // Downloads state
+  const [downloads, setDownloads] = useState([]);
+  const [downloadsPanelOpen, setDownloadsPanelOpen] = useState(false);
+
+  // Fullscreen mode
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [headerVisible, setHeaderVisible] = useState(true);
+  const headerHideTimer = React.useRef(null);
+
+  // Recently closed tabs
+  const [recentlyClosed, setRecentlyClosed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('intra-recently-closed') || '[]'); } catch { return []; }
+  });
 
   const setSearchEngine = (engine) => {
     setSearchEngineState(engine);
@@ -232,6 +252,28 @@ export default function App() {
     return off;
   }, [activeTabId]); // eslint-disable-line
 
+  // Downloads polling + events
+  useEffect(() => {
+    if (!isElectron) return;
+    const pollDownloads = async () => {
+      try {
+        const res = await window.electronAPI.getDownloads();
+        if (res?.success) setDownloads(res.downloads || []);
+      } catch (e) { console.error('[Downloads] Poll error:', e); }
+    };
+    pollDownloads();
+    const interval = setInterval(pollDownloads, 1000);
+
+    const offStarted = window.electronAPI.onDownloadStarted?.(() => pollDownloads()) ?? (() => {});
+    const offUpdated = window.electronAPI.onDownloadUpdated?.(() => pollDownloads()) ?? (() => {});
+
+    return () => {
+      clearInterval(interval);
+      offStarted();
+      offUpdated();
+    };
+  }, []);
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -239,6 +281,7 @@ export default function App() {
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) {
         if (e.key === 'F5') { e.preventDefault(); handleReload(); }
+        if (e.key === 'F11') { e.preventDefault(); handleToggleFullScreen(); }
         if (e.key === 'F3' && findBarOpen) { e.preventDefault(); handleFindNext(true); }
         if (e.key === 'Escape' && findBarOpen) { closeFindBar(); }
         return;
@@ -247,6 +290,7 @@ export default function App() {
         case 't': e.preventDefault(); handleNewTab(); break;
         case 'w': e.preventDefault(); handleCloseTab(activeTabId); break;
         case 'r': e.preventDefault(); handleReload(); break;
+        case 'j': e.preventDefault(); setDownloadsPanelOpen(v => !v); break;
         case 'f': {
           const tab = tabs.find(t => t.id === activeTabId);
           if (tab && !tab.isHome && !tab.isAiChat && !tab.isBlocked) {
@@ -257,6 +301,7 @@ export default function App() {
           break;
         }
         case 'l': e.preventDefault(); addressBarRef.current?.focus(); addressBarRef.current?.select(); break;
+        case 'j': e.preventDefault(); setDownloadsPanelOpen(v => !v); break;
         case '=': case '+': { e.preventDefault(); handleZoomIn(); break; }
         case '-': e.preventDefault(); handleZoomOut(); break;
         case '0': e.preventDefault(); handleZoomReset(); break;
@@ -270,12 +315,14 @@ export default function App() {
           break;
         }
       }
+      // Ctrl+Shift+T — reopen closed tab (без мода в switch, проверяем отдельно)
+      if (mod && e.shiftKey && e.key.toLowerCase() === 't') { e.preventDefault(); handleReopenClosedTab(); }
       if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); handleGoBack(); }
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); handleGoForward(); }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [activeTabId, tabs, findBarOpen]); // eslint-disable-line
+  }, [activeTabId, tabs, findBarOpen, handleToggleFullScreen]); // eslint-disable-line
 
   useEffect(() => {
     const root = document.getElementById('root');
@@ -321,6 +368,8 @@ export default function App() {
 
     const offPrivateTab = window.electronAPI.onOpenPrivateTab?.((data) => handleNewPrivateTab(data.url)) ?? (() => {});
 
+    const offReopenTab = window.electronAPI.onReopenClosedTab?.(() => handleReopenClosedTab()) ?? (() => {});
+
     const offSelectionReq = window.electronAPI.onAiSelectionRequest?.((data) => {
       setSidebarSelectionReq(data);
       setForceSidebarAiPanel(true);
@@ -339,6 +388,7 @@ export default function App() {
        'tab-loading','tab-can-go-back','open-new-tab'].forEach(ch =>
         window.electronAPI.removeAllListeners(ch));
       offPrivateTab();
+      offReopenTab();
       offSelectionReq();
       offBrowserNotif();
     };
@@ -374,11 +424,21 @@ export default function App() {
     // BrowserView appears at y=84 — preventing the "ghost" header overlap.
     flushSync(() => { setActiveTabId(tabId); });
     if (isElectron) {
-      await window.electronAPI.switchTab(tabId, (tab?.isHome || tab?.isAiChat) ?? true);
+      await window.electronAPI.switchTab(tabId, (tab?.isHome || tab?.isAiChat || tab?.isHistory || tab?.isSettings) ?? true);
     }
   }, [tabs]);
 
   const handleCloseTab = useCallback(async (tabId) => {
+    const tab = tabs.find(t => t.id === tabId);
+    // Сохраняем вкладку для восстановления (кроме домашних)
+    if (tab && !tab.isHome && !tab.isAiChat) {
+      const closedTab = { url: tab.url, title: tab.title, favicon: tab.favicon, closedAt: Date.now() };
+      setRecentlyClosed(prev => {
+        const next = [closedTab, ...prev.filter(t => t.url !== tab.url)].slice(0, 10);
+        localStorage.setItem('intra-recently-closed', JSON.stringify(next));
+        return next;
+      });
+    }
     if (tabs.length === 1) {
       // Заменяем последнюю вкладку новой домашней, а не добавляем ещё одну
       const newTab = createTab();
@@ -401,6 +461,44 @@ export default function App() {
     }
     if (isElectron) await window.electronAPI.closeTab(tabId);
   }, [tabs, activeTabId]);
+
+  const handleReopenClosedTab = useCallback(async () => {
+    if (recentlyClosed.length === 0) return;
+    const last = recentlyClosed[0];
+    setRecentlyClosed(prev => {
+      const next = prev.slice(1);
+      localStorage.setItem('intra-recently-closed', JSON.stringify(next));
+      return next;
+    });
+    const tab = createTab(last.url, last.title || 'Восстановленная вкладка');
+    setTabs(prev => [...prev, tab]);
+    setActiveTabId(tab.id);
+    if (isElectron) {
+      await window.electronAPI.createTab(tab.id, last.url);
+      await window.electronAPI.switchTab(tab.id);
+    }
+  }, [recentlyClosed]);
+
+  const handleToggleFullScreen = useCallback(() => {
+    if (!isElectron) return;
+    window.electronAPI.toggleFullScreen?.();
+    setIsFullScreen(v => !v);
+    if (!isFullScreen) setHeaderVisible(false);
+    else setHeaderVisible(true);
+  }, [isFullScreen]);
+
+  // Auto-hide header in fullscreen
+  const handleMouseMove = useCallback((e) => {
+    if (!isFullScreen) return;
+    if (e.clientY < 60) {
+      setHeaderVisible(true);
+      clearTimeout(headerHideTimer.current);
+      headerHideTimer.current = setTimeout(() => setHeaderVisible(false), 2500);
+    } else {
+      clearTimeout(headerHideTimer.current);
+      setHeaderVisible(false);
+    }
+  }, [isFullScreen]);
 
   const goHome = useCallback(async (tabId) => {
     const tid = tabId || activeTabId;
@@ -425,11 +523,29 @@ export default function App() {
     if (url.startsWith('intra://')) {
       const intraPath = url.replace('intra://', '');
       
-      // intra://nodes, intra://chat, intra://files, intra://settings, intra://my
-      const validIntraUrls = ['nodes', 'chat', 'files', 'settings', 'my', 'ai-chat'];
+      // intra://nodes, intra://chat, intra://files, intra://settings, intra://my, intra://history, intra://settings
+      const validIntraUrls = ['nodes', 'chat', 'files', 'settings', 'my', 'ai-chat', 'history'];
       if (validIntraUrls.includes(intraPath) || intraPath.startsWith('chat/')) {
         if (intraPath === 'ai-chat') {
           return handleOpenAiChat();
+        }
+        if (intraPath === 'history') {
+          setAddressBarValue(url);
+          flushSync(() => {
+            setTabs(prev => prev.map(t => t.id === activeTabId
+              ? { ...t, url, loading: false, isHome: false, isAiChat: false, isHistory: true, isBlocked: false }
+              : t));
+          });
+          return;
+        }
+        if (intraPath === 'settings') {
+          setAddressBarValue(url);
+          flushSync(() => {
+            setTabs(prev => prev.map(t => t.id === activeTabId
+              ? { ...t, url, loading: false, isHome: false, isAiChat: false, isHistory: false, isSettings: true, isBlocked: false }
+              : t));
+          });
+          return;
         }
         // Для других intra:// страниц - показать в HomePage через специальный URL
         setAddressBarValue(url);
@@ -510,11 +626,11 @@ export default function App() {
     setFindResult(null);
     if (!isElectron) return;
     if (text.trim()) {
-      window.electronAPI.findInPage(activeTabId, text, { forward: true, findNext: false });
+      window.electronAPI.findInPage(activeTabId, text, { forward: true, findNext: false, matchCase: findCaseSensitive });
     } else {
       window.electronAPI.stopFind(activeTabId, 'clearSelection');
     }
-  }, [activeTabId]);
+  }, [activeTabId, findCaseSensitive]);
 
   // ── Zoom ────────────────────────────────────────────────────────────────────
   const handleZoomIn = useCallback(async () => {
@@ -613,7 +729,8 @@ export default function App() {
   const currentNetMode = intranetOnly ? 'intranet' : 'internet';
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'white' }}>
+    <div onMouseMove={handleMouseMove} style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'white' }}>
+      {(!isFullScreen || headerVisible) && <>
       <BrowserSidebar
         onNavigate={handleNavigate}
         onGoHome={() => goHome(activeTabId)}
@@ -629,7 +746,37 @@ export default function App() {
         forceOpenAiPanel={forceSidebarAiPanel}
         onPanelOpened={() => setForceSidebarAiPanel(false)}
         isAiChatTabActive={activeTab?.isAiChat}
+        downloads={downloads}
+        onClearDownloads={() => {
+          downloads.filter(d => d.state !== 'progressing').forEach(d => window.electronAPI?.removeDownload?.(d.id));
+        }}
+        onCancelDownload={(id) => window.electronAPI?.cancelDownload?.(id)}
+        onRemoveDownload={(id) => window.electronAPI?.removeDownload?.(id)}
       />
+
+      {/* Downloads panel overlay — slides from the right, like Chrome */}
+      {downloadsPanelOpen && (
+        <div style={{
+          position: 'fixed', top: 84, right: 8, bottom: 8, width: 360,
+          background: 'white', borderRadius: 12, boxShadow: '-8px 0 40px rgba(0,0,0,0.15)',
+          zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          animation: 'slideInRight 0.2s ease'
+        }}>
+          <DownloadsPanel
+            downloads={downloads}
+            onClose={() => setDownloadsPanelOpen(false)}
+            onClearDownloads={() => {
+              downloads.filter(d => d.state !== 'progressing').forEach(d => window.electronAPI?.removeDownload?.(d.id));
+            }}
+            onCancelDownload={(id) => window.electronAPI?.cancelDownload?.(id)}
+            onRemoveDownload={(id) => window.electronAPI?.removeDownload?.(id)}
+            onShowInFolder={(id) => window.electronAPI?.showInFolder?.(id)}
+          />
+        </div>
+      )}
+      {downloadsPanelOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setDownloadsPanelOpen(false)}/>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
         <AppTabBar
@@ -645,7 +792,20 @@ export default function App() {
           />
         )}
 
-        {!activeTab?.isAiChat && <div style={{
+        {activeTab?.isHistory && (
+          <HistoryPage
+            onNavigate={handleNavigate}
+            bookmarks={bookmarks}
+          />
+        )}
+
+        {activeTab?.isSettings && (
+          <SettingsPage
+            onNavigate={handleNavigate}
+          />
+        )}
+
+        {!activeTab?.isAiChat && !activeTab?.isHistory && !activeTab?.isSettings && <div style={{
           display: 'flex', alignItems: 'center', gap: 6, height: 46, padding: '0 10px',
           background: 'white', borderBottom: '1px solid #e2e8f0', flexShrink: 0
         }}>
@@ -713,6 +873,33 @@ export default function App() {
               <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
             </NavBtn>
           )}
+
+          {/* Downloads button — always visible, with badge */}
+          {(() => {
+            const activeDownloads = downloads.filter(d => d.state === 'progressing').length;
+            const recentDownloads = downloads.filter(d => ['progressing', 'completed'].includes(d.state)).slice(0, 20);
+            return (
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                <NavBtn
+                  onClick={() => setDownloadsPanelOpen(v => !v)}
+                  active={downloadsPanelOpen}
+                  title="Загрузки"
+                >
+                  <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                  </svg>
+                </NavBtn>
+                {activeDownloads > 0 && (
+                  <div style={{
+                    position: 'absolute', top: 2, right: 2, minWidth: 15, height: 15,
+                    borderRadius: 8, background: '#2563eb', color: 'white',
+                    fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', padding: '0 3px', lineHeight: 1
+                  }}>{activeDownloads > 9 ? '9+' : activeDownloads}</div>
+                )}
+              </div>
+            );
+          })()}
 
           <div style={{ display: 'flex', gap: 1, background: '#f1f5f9', borderRadius: 7, padding: 2, border: '1px solid #e2e8f0', flexShrink: 0 }}>
             {networkModes.map(m => (
@@ -785,22 +972,44 @@ export default function App() {
               }}
               placeholder="Найти на странице..."
               style={{
-                flex: 1, maxWidth: 260, height: 26, padding: '0 8px', fontSize: 13,
-                border: '1px solid #cbd5e1', borderRadius: 6, outline: 'none',
+                width: 200, height: 28, padding: '0 10px', fontSize: 13,
+                border: findResult && findResult.total === 0 && findQuery ? '1px solid #fca5a5' : '1px solid #cbd5e1',
+                borderRadius: 7, outline: 'none',
                 background: '#f8fafc', color: '#1e293b'
               }}
             />
-            {findResult && (
-              <span style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>
-                {findResult.active}/{findResult.total}
+            {/* Case sensitive toggle */}
+            <button
+              onClick={() => { setFindCaseSensitive(v => !v); if (findQuery) handleFindChange(findQuery); }}
+              title={findCaseSensitive ? 'Без учёта регистра' : 'С учётом регистра'}
+              style={{
+                width: 28, height: 28, borderRadius: 6, border: 'none',
+                background: findCaseSensitive ? '#eff6ff' : 'transparent',
+                color: findCaseSensitive ? '#2563eb' : '#94a3b8',
+                fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'system-ui'
+              }}
+            >Aa</button>
+            {findQuery && findResult && (
+              <span style={{
+                fontSize: 11, whiteSpace: 'nowrap',
+                color: findResult.total === 0 ? '#ef4444' : '#64748b',
+                fontWeight: findResult.total === 0 ? 600 : 400
+              }}>
+                {findResult.total === 0 ? 'Не найдено' : `${findResult.active} из ${findResult.total}`}
               </span>
             )}
-            <NavBtn onClick={() => handleFindNext(false)} title="Предыдущее (Shift+Enter)">
-              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M18 15l-6-6-6 6"/></svg>
-            </NavBtn>
-            <NavBtn onClick={() => handleFindNext(true)} title="Следующее (Enter)">
-              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
-            </NavBtn>
+            {findQuery && (
+              <>
+                <NavBtn onClick={() => handleFindNext(false)} title="Предыдущее (Shift+Enter)">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M18 15l-6-6-6 6"/></svg>
+                </NavBtn>
+                <NavBtn onClick={() => handleFindNext(true)} title="Следующее (Enter)">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
+                </NavBtn>
+              </>
+            )}
             <NavBtn onClick={closeFindBar} title="Закрыть (Esc)">
               <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
             </NavBtn>
@@ -815,6 +1024,7 @@ export default function App() {
           />
         )}
       </div>
+      </>}
     </div>
   );
 }
@@ -862,7 +1072,7 @@ function applyUiPrefs({ animations, compact }) {
 }
 
 // ─── BrowserSidebar ────────────────────────────────────────────────────────────
-function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBookmarksChange, activeTab, onOpenAiChat, searchEngine, onSearchEngineChange, selectionRequest, onSelectionHandled, forceOpenAiPanel, onPanelOpened, isAiChatTabActive }) {
+function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBookmarksChange, activeTab, onOpenAiChat, searchEngine, onSearchEngineChange, selectionRequest, onSelectionHandled, forceOpenAiPanel, onPanelOpened, isAiChatTabActive, downloads: propDownloads, onClearDownloads, onCancelDownload, onRemoveDownload }) {
   const [panel, setPanel] = React.useState(null);
   const [newBm, setNewBm] = React.useState({ title: '', url: '' });
   const [showAddBm, setShowAddBm] = React.useState(false);
@@ -911,46 +1121,8 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
   const [openRouterModels, setOpenRouterModels] = React.useState([]);
   const [aiProcessingStatus, setAiProcessingStatus] = React.useState('');
 
-  // Downloads - используем polling вместо событий
-  const [downloads, setDownloads] = React.useState([]);
-
-  React.useEffect(() => {
-    if (!isElectron) {
-      console.log('[Downloads-DBG] Not in Electron, skipping');
-      return;
-    }
-    console.log('[Downloads-DBG] Starting download polling...');
-
-    // Опрос загрузок каждую секунду
-    const pollInterval = setInterval(async () => {
-      try {
-        const res = await window.electronAPI.getDownloads();
-        console.log('[Downloads-DBG] Poll result:', res);
-        if (res?.success) {
-          console.log('[Downloads-DBG] Poll downloads count:', res.downloads?.length);
-          console.log('[Downloads-DBG] Poll downloads array:', res.downloads);
-          setDownloads(res.downloads || []);
-          console.log('[Downloads-DBG] setDownloads called with:', res.downloads?.length, 'items');
-        }
-      } catch (e) {
-        console.error('[Downloads-DBG] Poll error:', e);
-      }
-    }, 1000);
-
-    // Также слушаем события для мгновенного обновления
-    const offStarted = window.electronAPI.onDownloadStarted((data) => {
-      console.log('[Downloads-DBG] onDownloadStarted:', data);
-    });
-    const offUpdated = window.electronAPI.onDownloadUpdated((data) => {
-      console.log('[Downloads-DBG] onDownloadUpdated:', data);
-    });
-
-    return () => {
-      clearInterval(pollInterval);
-      offStarted();
-      offUpdated();
-    };
-  }, []);
+  // Downloads — используем props из App (синглтон state в App.jsx)
+  const downloads = propDownloads || [];
 
   // Автоскролл к последнему сообщению
   React.useEffect(() => {
@@ -1547,7 +1719,7 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 12px', borderBottom:'1px solid #f1f5f9' }}>
                         <span style={{ fontSize:11, fontWeight:600, color:'#64748b' }}>Загрузки ({downloads.length})</span>
                         {downloads.length > 0 && (
-                          <button onClick={() => { setDownloads([]); window.electronAPI?.clearDownloads(); }}
+                          <button onClick={() => { onClearDownloads(); }}
                             style={{ fontSize:10, color:'#94a3b8', background:'none', border:'none', cursor:'pointer' }}>Очистить</button>
                         )}
                       </div>
@@ -1587,7 +1759,7 @@ function BrowserSidebar({ onNavigate, onGoHome, onPanelChange, bookmarks, onBook
                                     </svg>
                                   </button>
                                 )}
-                                <button onClick={() => { setDownloads(prev => prev.filter(d => d.id !== dl.id)); window.electronAPI?.removeDownload(dl.id); }} title="Удалить"
+                                <button onClick={() => { onRemoveDownload?.(dl.id); }} title="Удалить"
                                   style={{ padding:'2px 6px', fontSize:10, color:'#64748b', background:'#f1f5f9', border:'none', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
                                   <svg width="12" height="12" fill="none" stroke="#64748b" viewBox="0 0 24 24" strokeWidth="2">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>

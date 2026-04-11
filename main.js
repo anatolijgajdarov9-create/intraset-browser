@@ -1005,6 +1005,11 @@ ipcMain.on('window-maximize', () => {
 });
 ipcMain.on('window-close', () => mainWindow.close());
 
+ipcMain.handle('toggle-fullscreen', () => {
+  mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  return { success: true };
+});
+
 ipcMain.on('open-external', (_event, url) => shell.openExternal(url));
 
 ipcMain.handle('go-home', (_event, { tabId }) => {
@@ -2378,6 +2383,7 @@ ipcMain.on('ctx-select', (_e, { action, payload }) => {
     case 'open-debug-modal': openDebugModal(); break;
     case 'new-tab':          mainWindow?.webContents.send('open-new-tab',     { url: null }); break;
     case 'new-private-tab':  mainWindow?.webContents.send('open-private-tab', { url: null }); break;
+    case 'reopen-tab':       mainWindow?.webContents.send('reopen-closed-tab', {}); break;
     case 'ai-summarize-selection':
       mainWindow?.webContents.send('ai-selection-request', {
         text: payload?.text || '', promptType: 'summarize',
@@ -2526,6 +2532,7 @@ ipcMain.handle('open-browser-menu', (_e, { right, bottom }) => {
   openOverlayMenu([
     { type: 'item', label: 'Новая вкладка',           action: 'new-tab',         shortcut: 'Ctrl+T',         enabled: true },
     { type: 'item', label: 'Приватная вкладка',        action: 'new-private-tab', shortcut: 'Ctrl+Shift+N',   enabled: true },
+    { type: 'item', label: 'Восстановить вкладку',     action: 'reopen-tab',      shortcut: 'Ctrl+Shift+T',   enabled: true },
     { type: 'separator' },
     { type: 'item', label: 'Инструменты разработчика', action: 'devtools',        shortcut: 'F12',            enabled: true },
     { type: 'item', label: 'Отладка и диагностика',    action: 'open-debug-modal',                            enabled: true },

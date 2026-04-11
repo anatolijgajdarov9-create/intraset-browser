@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('window-minimize'),
   maximize: () => ipcRenderer.send('window-maximize'),
   close: () => ipcRenderer.send('window-close'),
+  toggleFullScreen: () => ipcRenderer.invoke('toggle-fullscreen'),
   openExternal: (url) => ipcRenderer.send('open-external', url),
 
   // File dialog
@@ -92,6 +93,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Context menu actions from BrowserView
   onOpenPrivateTab: (cb) => { const fn = (_e, data) => cb(data); ipcRenderer.on('open-private-tab', fn); return () => ipcRenderer.removeListener('open-private-tab', fn); },
+  onReopenClosedTab: (cb) => { const fn = (_e, data) => cb(data); ipcRenderer.on('reopen-closed-tab', fn); return () => ipcRenderer.removeListener('reopen-closed-tab', fn); },
 
   // AI Provider - clipboard check for image support detection
   aiCheckClipboard: () => ipcRenderer.invoke('ai-check-clipboard'),

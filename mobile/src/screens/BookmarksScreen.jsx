@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -13,16 +13,53 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getBookmarks, removeBookmark, addBookmark } from '../utils/storage';
+import * as Haptics from 'expo-haptics';
 import { useTabStore } from '../store/tabStore';
 import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
+
+function BookmarkItem({ item, onOpen, onEdit, onDelete, styles, theme }) {
+  const [faviconError, setFaviconError] = useState(false);
+
+  return (
+    <TouchableOpacity
+      style={styles.bookmarkItem}
+      onPress={() => onOpen(item.url)}
+      onLongPress={() => onEdit(item)}
+      activeOpacity={0.7}
+    >
+      <View style={styles.bookmarkIcon}>
+        {item.favicon && !faviconError ? (
+          <Image
+            source={{ uri: item.favicon }}
+            style={styles.favicon}
+            onError={() => setFaviconError(true)}
+          />
+        ) : (
+          <View style={styles.faviconPlaceholder}>
+            <Text style={styles.faviconText}>
+              {item.title?.charAt(0).toUpperCase() || '★'}
+            </Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.bookmarkInfo}>
+        <Text style={styles.bookmarkTitle} numberOfLines={1}>{item.title}</Text>
+        <Text style={styles.bookmarkUrl} numberOfLines={1}>{item.url}</Text>
+      </View>
+      <TouchableOpacity style={styles.deleteButton} onPress={() => onDelete(item.id)}>
+        <Ionicons name="trash-outline" size={18} color={theme.textTertiary} />
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+}
 
 export default function BookmarksScreen() {
   const navigation = useNavigation();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(theme, insets), [theme, insets]);
-  const { createTab, switchTab } = useTabStore();
+  // useTabStore нужен только через getState() в handleOpen
 
   const [bookmarks, setBookmarks] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -37,11 +74,15 @@ export default function BookmarksScreen() {
   };
 
   const handleOpen = (url) => {
-    createTab(url, 'Вкладка');
+    // Навигация в текущей вкладке (не открываем новую)
+    const { activeTabId, updateTabUrl, setTabHomeOverlay } = useTabStore.getState();
+    setTabHomeOverlay(activeTabId, false);
+    updateTabUrl(activeTabId, url);
     navigation.goBack();
   };
 
   const handleDelete = async (id) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(
       'Удалить закладку?',
       'Это действие нельзя отменить.',
@@ -59,6 +100,7 @@ export default function BookmarksScreen() {
   };
 
   const handleEdit = (bookmark) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setEditingId(bookmark.id);
     setEditTitle(bookmark.title);
     setEditUrl(bookmark.url);
@@ -113,31 +155,14 @@ export default function BookmarksScreen() {
     }
 
     return (
-      <TouchableOpacity
-        style={styles.bookmarkItem}
-        onPress={() => handleOpen(item.url)}
-        onLongPress={() => handleEdit(item)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.bookmarkIcon}>
-          {item.favicon ? (
-            <Image source={{ uri: item.favicon }} style={styles.favicon} />
-          ) : (
-            <View style={styles.faviconPlaceholder}>
-              <Text style={styles.faviconText}>
-                {item.title?.charAt(0).toUpperCase() || '★'}
-              </Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.bookmarkInfo}>
-          <Text style={styles.bookmarkTitle} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.bookmarkUrl} numberOfLines={1}>{item.url}</Text>
-        </View>
-        <TouchableOpacity style={styles.deleteButton} onPress={() => handleDelete(item.id)}>
-          <Ionicons name="trash-outline" size={18} color={theme.textTertiary} />
-        </TouchableOpacity>
-      </TouchableOpacity>
+      <BookmarkItem
+        item={item}
+        onOpen={handleOpen}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+        styles={styles}
+        theme={theme}
+      />
     );
   };
 

@@ -56,6 +56,12 @@ export default function BottomToolbar({
       disabled: false,
     },
     {
+      key: 'search',
+      icon: 'search-outline',
+      onPress: onOpenFind,
+      disabled: false,
+    },
+    {
       key: 'tabs',
       onPress: onOpenTabs,
       disabled: false,

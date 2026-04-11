@@ -6,8 +6,11 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
+  Linking,
+  Share,
+  ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useNavigation } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
@@ -19,21 +22,72 @@ import {
   trackVisit,
   addHistoryEntry,
   addBookmark,
-  removeBookmark,
+  removeBookmarkByUrl,
   isBookmarked as checkBookmark,
-  getDownloads,
-  setDownloadsList,
+  addDownload,
+  updateDownload,
 } from '../utils/storage';
 import { isIntranetUrl } from '../config/intranet';
 import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
 
+import NetInfo from '@react-native-community/netinfo';
+import * as Haptics from 'expo-haptics';
+
 import AddressBar from '../components/AddressBar';
+import TabChips from '../components/TabChips';
+import BrowserMenu from '../components/BrowserMenu';
 import BottomToolbar from '../components/BottomToolbar';
 import ProgressBar from '../components/ProgressBar';
 import HomeContent from '../components/HomeContent';
 import FindBar from '../components/FindBar';
 import PrivateModeBanner from '../components/PrivateModeBanner';
+import OfflineBanner from '../components/OfflineBanner';
+import LinkContextMenu from '../components/LinkContextMenu';
+
+// ─── Утилиты для скачивания файлов ──────────────────────────────────────────
+
+const DOWNLOAD_EXTENSIONS = new Set([
+  'pdf','doc','docx','xls','xlsx','ppt','pptx',
+  'zip','rar','7z','tar','gz','tgz',
+  'apk','exe','dmg','deb','rpm',
+  'mp3','mp4','avi','mkv','mov','wav','flac',
+  'csv',
+]);
+
+function isLikelyDownloadUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const ext = pathname.split('.').pop()?.toLowerCase();
+    return !!ext && DOWNLOAD_EXTENSIONS.has(ext);
+  } catch {
+    return false;
+  }
+}
+
+async function downloadFileAndSave(url) {
+  if (!url) return;
+  const filename = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'download');
+  const downloadsDir = FileSystem.documentDirectory + 'downloads/';
+  const dirInfo = await FileSystem.getInfoAsync(downloadsDir);
+  if (!dirInfo.exists) {
+    await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
+  }
+  // Сразу добавляем запись "загружается" — чтобы она отобразилась немедленно
+  const entryList = await addDownload({ filename, url, uri: null, size: null, status: 'downloading' });
+  const entryId = entryList?.[0]?.id;
+  try {
+    const { uri } = await FileSystem.downloadAsync(url, downloadsDir + filename);
+    const fileInfo = await FileSystem.getInfoAsync(uri);
+    if (entryId) {
+      await updateDownload(entryId, { uri, size: fileInfo.size || null, status: 'completed' });
+    }
+    return filename;
+  } catch (e) {
+    if (entryId) await updateDownload(entryId, { status: 'failed' });
+    throw e;
+  }
+}
 
 // ─── Заглушка для заблокированной страницы ──────────────────────────────────
 
@@ -59,6 +113,7 @@ function BlockedView({ url, onHome, theme }) {
 export default function MainScreen() {
   const navigation = useNavigation();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const {
@@ -72,8 +127,12 @@ export default function MainScreen() {
     getActiveTab,
     createTab,
     switchTab,
+    tabHomeOverlay,
+    setTabHomeOverlay,
+    tabZoom,
+    setTabZoom,
   } = useTabStore();
-  const { settings } = useSettingsStore();
+  const { settings, toggleNightMode } = useSettingsStore();
 
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [blockedUrl, setBlockedUrl] = useState(null);
@@ -81,10 +140,19 @@ export default function MainScreen() {
   const [findMatchCount, setFindMatchCount] = useState(0);
   const [findCurrentMatch, setFindCurrentMatch] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [isDesktopMode, setIsDesktopMode] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
+  const [contextMenuUrl, setContextMenuUrl] = useState('');
+  // Режим чтения: { [tabId]: boolean } — не персистируется
+  const [readingModes, setReadingModes] = useState({});
 
   const webViewRef = useRef(null);
   const activeTabIdRef = useRef(activeTabId);
   const activeTabRef = useRef(null);
+  const findBarVisibleRef = useRef(false);
 
   const activeTab = getActiveTab();
 
@@ -107,6 +175,17 @@ export default function MainScreen() {
     check();
   }, [activeTab?.url]);
 
+  // Синхронизируем ref для findBarVisible (защита от stale closure в handleNavigationStateChange)
+  useEffect(() => { findBarVisibleRef.current = findBarVisible; }, [findBarVisible]);
+
+  // Слежение за состоянием сети
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOffline(state.isConnected === false);
+    });
+    return unsubscribe;
+  }, []);
+
   // При закрытии FindBar сбрасываем подсветку
   useEffect(() => {
     if (!findBarVisible) {
@@ -123,6 +202,56 @@ export default function MainScreen() {
     }
   }, [findBarVisible]);
 
+  // ─── Перехват навигации внутри WebView ───────────────────────────────────
+
+  const handleShouldStartLoadWithRequest = useCallback((request) => {
+    const { url, navigationType } = request;
+
+    if (!url || url.startsWith('intra://') || url.startsWith('about:')) {
+      return true;
+    }
+
+    // Определяем тип навигации: click (пользователь кликнул ссылку) или other
+    const isUserClick = navigationType === 'click' || navigationType === 'formSubmitted';
+
+    // Открываем системные URI-схемы через Linking
+    const systemSchemes = ['tel:', 'mailto:', 'intent:', 'market:', 'geo:', 'sms:', 'whatsapp:', 'tg:', 'telegram:', 'vk:', 'skype:', 'slack:'];
+    if (systemSchemes.some(s => url.startsWith(s))) {
+      Linking.openURL(url).catch(() => {});
+      return false;
+    }
+
+    // Проверка на интранет-режим
+    if (settings.intranetOnly && !isIntranetUrl(url)) {
+      setBlockedUrl(url);
+      updateTabUrl(activeTabIdRef.current, 'intra://home');
+      return false;
+    }
+
+    // Внешние ссылки (не HTTP/HTTPS) — открываем в системном браузере
+    try {
+      const parsedUrl = new URL(url);
+      if (!['http:', 'https:', 'file:', 'data:'].includes(parsedUrl.protocol)) {
+        Linking.openURL(url).catch(() => {});
+        return false;
+      }
+    } catch {
+      return false;
+    }
+
+    // Android: перехватываем файлы по расширению до того, как их заберёт DownloadManager
+    // onFileDownload работает только на iOS, поэтому нужна эта ветка
+    if (Platform.OS === 'android' && isLikelyDownloadUrl(url)) {
+      Alert.alert('Скачивание', `Начинаю скачивание...`);
+      downloadFileAndSave(url)
+        .then(filename => Alert.alert('Готово', `Файл «${filename}» сохранён в загрузки`))
+        .catch(e => Alert.alert('Ошибка', `Не удалось скачать файл: ${e.message}`));
+      return false;
+    }
+
+    return true;
+  }, [settings.intranetOnly]);
+
   // ─── Навигация ────────────────────────────────────────────────────────────
 
   const handleNavigate = useCallback((rawInput) => {
@@ -134,14 +263,33 @@ export default function MainScreen() {
       return;
     }
     setBlockedUrl(null);
+    // Снимаем домашний оверлей при любой навигации
+    setTabHomeOverlay(activeTabIdRef.current, false);
     updateTabUrl(activeTabIdRef.current, url);
-  }, [settings.intranetOnly, settings.searchEngine]);
+  }, [settings.intranetOnly, settings.searchEngine, setTabHomeOverlay, updateTabUrl]);
 
   const handleHome = useCallback(() => {
     setBlockedUrl(null);
     setFindBarVisible(false);
-    updateTabUrl(activeTabIdRef.current, 'intra://home');
-  }, []);
+    const tabId = activeTabIdRef.current;
+    const currentTab = activeTabRef.current;
+    // Если вкладка уже на домашней странице — ничего не делаем
+    if (!currentTab || currentTab.url === 'intra://home') return;
+    // Показываем домашний оверлей, НЕ меняя URL вкладки
+    setTabHomeOverlay(tabId, true);
+    // Сбрасываем заголовок и favicon, чтобы чип показывал домашнюю страницу
+    updateTabTitle(tabId, 'Новая вкладка');
+    updateTabFavicon(tabId, null);
+  }, [setTabHomeOverlay, updateTabTitle, updateTabFavicon]);
+
+  // При выборе вкладки через TabChips — всегда снимаем домашний оверлей для той вкладки
+  const handleSelectTab = useCallback((tabId) => {
+    const overlay = useTabStore.getState().tabHomeOverlay;
+    if (overlay[tabId]) {
+      setTabHomeOverlay(tabId, false);
+    }
+    switchTab(tabId);
+  }, [switchTab, setTabHomeOverlay]);
 
   const handleNewTab = useCallback((isPrivate = false) => {
     const tab = createTab('intra://home', 'Новая вкладка', isPrivate);
@@ -150,6 +298,12 @@ export default function MainScreen() {
   }, [createTab]);
 
   const handleGoBack = useCallback(() => {
+    // Если активен домашний оверлей — кнопка «Назад» снимает его
+    const { tabHomeOverlay: overlay, setTabHomeOverlay: setOverlay } = useTabStore.getState();
+    if (overlay[activeTabIdRef.current]) {
+      setOverlay(activeTabIdRef.current, false);
+      return;
+    }
     webViewRef.current?.goBack();
   }, []);
 
@@ -165,11 +319,124 @@ export default function MainScreen() {
     webViewRef.current?.stopLoading();
   }, []);
 
+  // ─── Управление меню ───────────────────────────────────────────────────────
+
+  const handleMenuAction = useCallback((action) => {
+    const tab = activeTabRef.current;
+    switch (action) {
+      case 'reload':
+        handleReload();
+        break;
+      case 'desktop':
+        setIsDesktopMode(prev => !prev);
+        setTimeout(() => {
+          const url = activeTabRef.current?.url;
+          if (url && url !== 'intra://home') {
+            updateTabUrl(activeTabIdRef.current, url);
+          }
+        }, 100);
+        break;
+      case 'share':
+        if (tab?.url && tab.url !== 'intra://home') {
+          Share.share({
+            message: tab.url,
+            title: tab.title || tab.url,
+          });
+        }
+        break;
+      case 'save':
+        Alert.alert('Сохранить', 'Функция сохранения страницы в разработке');
+        break;
+      case 'find':
+        setFindBarVisible(true);
+        break;
+      case 'nightMode': {
+        const newMode = !settings.nightMode;
+        toggleNightMode();
+        webViewRef.current?.injectJavaScript(newMode ? nightModeOnScript : nightModeOffScript);
+        break;
+      }
+      case 'reading': {
+        const tabId = activeTabIdRef.current;
+        const newVal = !readingModes[tabId];
+        setReadingModes(prev => ({ ...prev, [tabId]: newVal }));
+        const readerScript = `(function(){
+          var el = document.getElementById('__intra_reader__');
+          if (el) { el.remove(); }
+          ${newVal ? `
+          var s = document.createElement('style');
+          s.id = '__intra_reader__';
+          s.textContent = [
+            'html,body{background:#fffff8!important;color:#1a1a1a!important}',
+            'body{max-width:680px!important;margin:0 auto!important;padding:20px!important;font-family:Georgia,serif!important;font-size:18px!important;line-height:1.8!important}',
+            'nav,header,footer,aside,[class*="nav"],[class*="menu"],[class*="sidebar"],[class*="ad"],[class*="banner"],[id*="nav"],[id*="header"],[id*="footer"],[id*="sidebar"]{display:none!important}',
+            'img,video{max-width:100%!important;height:auto!important}',
+            'a{color:#2563eb!important}'
+          ].join('\\n');
+          document.head.appendChild(s);
+          ` : ''}
+        })(); true;`;
+        webViewRef.current?.injectJavaScript(readerScript);
+        break;
+      }
+      case 'settings':
+        navigation.navigate('Settings');
+        break;
+    }
+  }, [handleReload, settings.nightMode, toggleNightMode, readingModes]);
+
+  // ─── Масштаб текста ──────────────────────────────────────────────────────────
+
+  const handleZoomIn = useCallback(() => {
+    const tabId = activeTabIdRef.current;
+    const current = useTabStore.getState().tabZoom[tabId] || 100;
+    const next = Math.min(200, current + 10);
+    setTabZoom(tabId, next);
+    webViewRef.current?.injectJavaScript(
+      `(function(){document.body.style.zoom='${next}%';document.documentElement.style.zoom='${next}%';})(); true;`
+    );
+  }, [setTabZoom]);
+
+  const handleZoomOut = useCallback(() => {
+    const tabId = activeTabIdRef.current;
+    const current = useTabStore.getState().tabZoom[tabId] || 100;
+    const next = Math.max(50, current - 10);
+    setTabZoom(tabId, next);
+    webViewRef.current?.injectJavaScript(
+      `(function(){document.body.style.zoom='${next}%';document.documentElement.style.zoom='${next}%';})(); true;`
+    );
+  }, [setTabZoom]);
+
+  const { closeTab } = useTabStore();
+
+  const handleCloseTab = useCallback((tabId) => {
+    closeTab(tabId);
+  }, [closeTab]);
+
+  // target="_blank" и window.open() — открываем в новой вкладке, а не в системном браузере
+  const handleOpenWindow = useCallback((syntheticEvent) => {
+    const { nativeEvent } = syntheticEvent;
+    const targetUrl = nativeEvent?.targetUrl;
+    if (targetUrl && targetUrl !== 'about:blank') {
+      createTab(targetUrl, 'Новая вкладка', activeTabRef.current?.isPrivate || false);
+    }
+  }, [createTab]);
+
+  const handleLoadProgress = useCallback(({ nativeEvent }) => {
+    setLoadProgress(nativeEvent.progress);
+  }, []);
+
   // ─── Состояние WebView ───────────────────────────────────────────────────
 
   const handleNavigationStateChange = useCallback((navState) => {
     const { url, title, canGoBack, canGoForward, loading } = navState;
     const tabId = activeTabIdRef.current;
+
+    // Автозакрытие FindBar при переходе на другую страницу
+    const prevUrl = activeTabRef.current?.url;
+    if (findBarVisibleRef.current && url && prevUrl && url !== prevUrl) {
+      setFindBarVisible(false);
+    }
 
     updateTabUrl(tabId, url);
     updateTabTitle(tabId, title || getDomain(url));
@@ -187,7 +454,15 @@ export default function MainScreen() {
     updateTabLoading(activeTabIdRef.current, true);
   }, []);
 
+  // ─── Pull to refresh ───────────────────────────────────────────────────────
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    webViewRef.current?.reload();
+  }, []);
+
   const handleLoadEnd = useCallback(() => {
+    setRefreshing(false);
     updateTabLoading(activeTabIdRef.current, false);
   }, []);
 
@@ -202,8 +477,9 @@ export default function MainScreen() {
     if (!tab?.url || tab.url === 'intra://home') return;
 
     if (isBookmarked) {
-      await removeBookmark(tab.url);
+      await removeBookmarkByUrl(tab.url);
       setIsBookmarked(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } else {
       await addBookmark({
         url: tab.url,
@@ -211,41 +487,19 @@ export default function MainScreen() {
         favicon: tab.favicon || null,
       });
       setIsBookmarked(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
   }, [isBookmarked]);
 
   // ─── Скачивание файлов ───────────────────────────────────────────────────
 
+  // onFileDownload срабатывает на iOS; на Android используем перехват в onShouldStartLoadWithRequest
   const handleFileDownload = useCallback(async ({ nativeEvent }) => {
-    const { url } = nativeEvent;
+    const url = nativeEvent?.url;
     if (!url) return;
-
+    Alert.alert('Скачивание', `Начинаю скачивание...`);
     try {
-      const filename = url.split('/').pop()?.split('?')[0] || 'download';
-      const downloadsDir = FileSystem.documentDirectory + 'downloads/';
-      const dirInfo = await FileSystem.getInfoAsync(downloadsDir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
-      }
-      const fileUri = downloadsDir + filename;
-
-      Alert.alert('Скачивание', `Начинаю скачивание: ${filename}`);
-
-      const { uri } = await FileSystem.downloadAsync(url, fileUri);
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-
-      const downloads = await getDownloads();
-      downloads.unshift({
-        id: Date.now().toString(),
-        filename,
-        url,
-        uri,
-        size: fileInfo.size || null,
-        date: Date.now(),
-        status: 'completed',
-      });
-      await setDownloadsList(downloads);
-
+      const filename = await downloadFileAndSave(url);
       Alert.alert('Готово', `Файл «${filename}» сохранён в загрузки`);
     } catch (e) {
       Alert.alert('Ошибка', `Не удалось скачать файл: ${e.message}`);
@@ -253,17 +507,6 @@ export default function MainScreen() {
   }, []);
 
   // ─── Favicon из WebView ──────────────────────────────────────────────────
-
-  const handleWebViewMessage = useCallback(async (event) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'favicon' && data.favicon && activeTabIdRef.current) {
-        updateTabFavicon(activeTabIdRef.current, data.favicon);
-      }
-    } catch {
-      // Игнорируем ошибки парсинга
-    }
-  }, [updateTabFavicon]);
 
   const extractFaviconScript = `
     (function() {
@@ -276,6 +519,51 @@ export default function MainScreen() {
       true;
     })();
   `;
+
+  // Определение долгого нажатия на ссылку → контекстное меню
+  const linkLongPressScript = `(function(){
+    var _lpt;
+    document.addEventListener('touchstart', function(e){
+      var a = e.target.closest('a[href]');
+      if (!a) return;
+      _lpt = setTimeout(function(){
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type:'__linkContext',
+          url: a.href,
+          text: (a.innerText||a.textContent||'').trim().substring(0,80)
+        }));
+      }, 500);
+    }, {passive:true});
+    document.addEventListener('touchend', function(){ clearTimeout(_lpt); }, {passive:true});
+    document.addEventListener('touchmove', function(){ clearTimeout(_lpt); }, {passive:true});
+  })(); true;`;
+
+  // CSS-инъекция ночного режима
+  const nightModeOnScript = `(function(){
+    var el = document.getElementById('__intra_night__');
+    if (!el) { el = document.createElement('style'); el.id = '__intra_night__'; document.head.appendChild(el); }
+    el.textContent = 'html{filter:invert(1) hue-rotate(180deg)!important;}img,video,canvas,svg,iframe{filter:invert(1) hue-rotate(180deg)!important;}';
+  })(); true;`;
+
+  const nightModeOffScript = `(function(){
+    var el = document.getElementById('__intra_night__');
+    if (el) el.remove();
+  })(); true;`;
+
+  // Перехват window.alert / confirm / prompt — преобразуем в нативные диалоги
+  const dialogInterceptScript = `(function(){
+    window.alert = function(msg) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({type:'__dialog',kind:'alert',msg:String(msg||'')}));
+    };
+    window.confirm = function(msg) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({type:'__dialog',kind:'confirm',msg:String(msg||'')}));
+      return true;
+    };
+    window.prompt = function(msg, def) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({type:'__dialog',kind:'prompt',msg:String(msg||'')}));
+      return null;
+    };
+  })(); true;`;
 
   // ─── Find in Page ────────────────────────────────────────────────────────
 
@@ -370,15 +658,50 @@ export default function MainScreen() {
       } else if (data.type === 'findResult') {
         setFindMatchCount(data.count);
         setFindCurrentMatch(data.count > 0 ? 1 : 0);
+      } else if (data.type === '__dialog') {
+        Alert.alert(
+          data.kind === 'alert' ? 'Сообщение' : 'Подтверждение',
+          data.msg || ''
+        );
+      } else if (data.type === '__linkContext' && data.url) {
+        setContextMenuUrl(data.url);
+        setContextMenuVisible(true);
       }
     } catch {
       // Игнорируем ошибки парсинга
     }
   }, [updateTabFavicon]);
 
+  // Открыть ссылку из контекстного меню в новой вкладке
+  const handleOpenLinkInNewTab = useCallback((url) => {
+    createTab(url, url, activeTabRef.current?.isPrivate || false);
+  }, [createTab]);
+
   // ─── Рендер ──────────────────────────────────────────────────────────────
 
-  const showHome = !activeTab || activeTab.url === 'intra://home' || activeTab.isHome;
+  const isTabShowingHomeOverlay = !!(tabHomeOverlay[activeTabId]);
+  const showHome = !activeTab || activeTab.url === 'intra://home' || activeTab.isHome || isTabShowingHomeOverlay;
+  const currentZoom = tabZoom[activeTabId] || 100;
+  const isReadingMode = !!readingModes[activeTabId];
+
+  // Скрипт масштаба — применяется при каждой загрузке страницы
+  const zoomInitScript = currentZoom !== 100
+    ? `(function(){document.body.style.zoom='${currentZoom}%';document.documentElement.style.zoom='${currentZoom}%';})(); true;`
+    : '';
+
+  // Скрипт режима чтения — применяется при каждой загрузке страницы
+  const readerInitScript = isReadingMode ? `(function(){
+    var s = document.createElement('style');
+    s.id = '__intra_reader__';
+    s.textContent = [
+      'html,body{background:#fffff8!important;color:#1a1a1a!important}',
+      'body{max-width:680px!important;margin:0 auto!important;padding:20px!important;font-family:Georgia,serif!important;font-size:18px!important;line-height:1.8!important}',
+      'nav,header,footer,aside,[class*="nav"],[class*="menu"],[class*="sidebar"],[class*="ad"],[class*="banner"],[id*="nav"],[id*="header"],[id*="footer"],[id*="sidebar"]{display:none!important}',
+      'img,video{max-width:100%!important;height:auto!important}',
+      'a{color:#2563eb!important}'
+    ].join('\\n');
+    document.head.appendChild(s);
+  })(); true;` : '';
   const showBlocked = !!blockedUrl && !showHome;
   const showWebView = !showHome && !showBlocked;
 
@@ -390,6 +713,17 @@ export default function MainScreen() {
       {/* Баннер приватного режима */}
       <PrivateModeBanner visible={!!activeTab?.isPrivate} />
 
+      {/* Табы-чипсы */}
+      <TabChips
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelectTab={handleSelectTab}
+        onNewTab={() => handleNewTab(false)}
+        onNewPrivateTab={() => handleNewTab(true)}
+        onCloseTab={handleCloseTab}
+        onOpenTabs={() => navigation.navigate('Tabs')}
+      />
+
       {/* Адресная строка */}
       <AddressBar
         url={activeTab?.url || 'intra://home'}
@@ -400,12 +734,31 @@ export default function MainScreen() {
         onReload={handleReload}
         onStop={handleStop}
         onToggleBookmark={handleToggleBookmark}
+        onOpenMenu={() => setMenuVisible(true)}
       />
 
       {/* Прогресс-бар загрузки */}
       <ProgressBar
         loading={activeTab?.loading || false}
+        progress={loadProgress}
         isPrivate={activeTab?.isPrivate || false}
+      />
+
+      {/* Меню браузера */}
+      <BrowserMenu
+        visible={menuVisible}
+        onClose={() => setMenuVisible(false)}
+        onAction={handleMenuAction}
+        url={activeTab?.url}
+        isDesktopMode={isDesktopMode}
+        isNightMode={settings.nightMode}
+        isReadingMode={isReadingMode}
+        currentZoom={currentZoom}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        canGoBack={activeTab?.canGoBack || false}
+        canGoForward={activeTab?.canGoForward || false}
+        headerHeight={insets.top + (activeTab?.isPrivate ? 28 : 0) + SIZES.tabBarHeight + 56}
       />
 
       {/* Область контента */}
@@ -433,13 +786,40 @@ export default function MainScreen() {
             ref={webViewRef}
             source={{ uri: activeTab.url }}
             onNavigationStateChange={handleNavigationStateChange}
+            onShouldStartLoadWithRequest={handleShouldStartLoadWithRequest}
+            onOpenWindow={handleOpenWindow}
             onLoadStart={handleLoadStart}
             onLoadEnd={handleLoadEnd}
+            onLoadProgress={handleLoadProgress}
             onError={handleError}
             onFileDownload={handleFileDownload}
             onMessage={handleWebViewMessageExtended}
-            injectedJavaScript={extractFaviconScript}
+            injectedJavaScript={
+              extractFaviconScript + '\n' +
+              dialogInterceptScript + '\n' +
+              linkLongPressScript +
+              (settings.nightMode ? '\n' + nightModeOnScript : '') +
+              (zoomInitScript ? '\n' + zoomInitScript : '') +
+              (readerInitScript ? '\n' + readerInitScript : '')
+            }
+            pullToRefreshEnabled={true}
+            renderError={(domain, code, desc) => (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorIcon}>⚠️</Text>
+                <Text style={styles.errorTitle}>Страница недоступна</Text>
+                <Text style={styles.errorDesc}>{desc || 'Проверьте подключение к сети'}</Text>
+                <TouchableOpacity
+                  style={[styles.blockedButton, { backgroundColor: theme.primary }]}
+                  onPress={handleReload}
+                >
+                  <Text style={styles.blockedButtonText}>Повторить</Text>
+                </TouchableOpacity>
+              </View>
+            )}
             style={styles.webView}
+            originWhitelist={['*']}
+            setSupportMultipleWindows={false}
+            setSupportZoom={true}
             startInLoadingState={false}
             javaScriptEnabled={true}
             domStorageEnabled={true}
@@ -451,6 +831,10 @@ export default function MainScreen() {
             thirdPartyCookiesEnabled={!activeTab?.isPrivate}
             cacheEnabled={!activeTab?.isPrivate}
             incognito={activeTab?.isPrivate || false}
+            scalesPageToFit={true}
+            bounces={true}
+            backgroundColor={theme.background}
+            userAgent={isDesktopMode ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' : undefined}
           />
         )}
       </View>
@@ -480,6 +864,16 @@ export default function MainScreen() {
         onOpenTabs={() => navigation.navigate('Tabs')}
         onOpenFind={() => setFindBarVisible(v => !v)}
       />
+
+      <OfflineBanner visible={isOffline} />
+
+      {/* Контекстное меню длинного нажатия на ссылку */}
+      <LinkContextMenu
+        visible={contextMenuVisible}
+        url={contextMenuUrl}
+        onClose={() => setContextMenuVisible(false)}
+        onOpenInNewTab={handleOpenLinkInNewTab}
+      />
     </SafeAreaView>
   );
 }
@@ -498,6 +892,30 @@ const makeStyles = (theme) => StyleSheet.create({
   },
   webView: {
     flex: 1,
+  },
+  // ── Error page ──
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SIZES.paddingXl,
+    backgroundColor: theme.background,
+  },
+  errorIcon: {
+    fontSize: 48,
+    marginBottom: SIZES.paddingLg,
+  },
+  errorTitle: {
+    fontSize: SIZES.textXl,
+    fontWeight: '700',
+    color: theme.text,
+    marginBottom: SIZES.paddingSm,
+  },
+  errorDesc: {
+    fontSize: SIZES.textSm,
+    color: theme.textSecondary,
+    textAlign: 'center',
+    marginBottom: SIZES.paddingXl,
   },
   // ── Blocked page ──
   blockedContainer: {

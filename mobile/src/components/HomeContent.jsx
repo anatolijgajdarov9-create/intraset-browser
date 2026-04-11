@@ -70,7 +70,7 @@ export default function HomeContent({ onNavigate, onOpenBookmarks, onOpenHistory
       {/* Заголовок */}
       <View style={styles.header}>
         <View style={styles.logoContainer}>
-          <Ionicons name="globe" size={40} color={theme.primary} />
+          <Ionicons name="globe" size={28} color={theme.primary} />
         </View>
         <Text style={styles.title}>Intra Browser</Text>
         <Text style={styles.subtitle}>Введите адрес или поисковый запрос</Text>
@@ -203,13 +203,20 @@ const makeStyles = (theme) => StyleSheet.create({
     paddingHorizontal: SIZES.paddingLg,
   },
   logoContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: SIZES.radiusXl,
-    backgroundColor: theme.primaryLight,
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: SIZES.paddingMd,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.10,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 0.5,
+    borderColor: 'rgba(0,0,0,0.07)',
   },
   title: {
     fontSize: SIZES.text2Xl,
