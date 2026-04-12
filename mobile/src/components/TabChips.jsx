@@ -30,6 +30,36 @@ export default function TabChips({
   const faviconErrors = useRef(new Set());
   const [, forceUpdate] = useState(0);
 
+  // Анимация пульса для загружающейся активной вкладки
+  const loadingPulse = useRef(new Animated.Value(1)).current;
+  const loadingAnim = useRef(null);
+
+  useEffect(() => {
+    const activeTab = tabs.find(t => t.id === activeTabId);
+    const isLoading = !!(activeTab?.loading);
+    if (isLoading) {
+      loadingAnim.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(loadingPulse, { toValue: 0.35, duration: 550, useNativeDriver: true }),
+          Animated.timing(loadingPulse, { toValue: 1,    duration: 550, useNativeDriver: true }),
+        ])
+      );
+      loadingAnim.current.start();
+    } else {
+      if (loadingAnim.current) {
+        loadingAnim.current.stop();
+        loadingAnim.current = null;
+      }
+      Animated.timing(loadingPulse, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    }
+    return () => {
+      if (loadingAnim.current) {
+        loadingAnim.current.stop();
+        loadingAnim.current = null;
+      }
+    };
+  }, [tabs, activeTabId]);
+
   // Scroll to active tab when it changes
   useEffect(() => {
     const x = chipPositions.current[activeTabId];
@@ -91,18 +121,27 @@ export default function TabChips({
               ) : tab.favicon && !hasFaviconError ? (
                 <Animated.Image
                   source={{ uri: tab.favicon }}
-                  style={styles.chipFavicon}
+                  style={[
+                    styles.chipFavicon,
+                    isActive && tab.loading && { opacity: loadingPulse },
+                  ]}
                   onError={() => {
                     faviconErrors.current.add(tab.id);
                     forceUpdate(n => n + 1);
                   }}
                 />
               ) : (
-                <View style={[styles.chipFaviconPlaceholder, isActive && styles.chipFaviconPlaceholderActive]}>
+                <Animated.View
+                  style={[
+                    styles.chipFaviconPlaceholder,
+                    isActive && styles.chipFaviconPlaceholderActive,
+                    isActive && tab.loading && { opacity: loadingPulse },
+                  ]}
+                >
                   <Text style={[styles.chipFaviconText, isActive && styles.chipFaviconTextActive]}>
-                    {tab.title?.charAt(0).toUpperCase() || '?'}
+                    {tab.loading && isActive ? '…' : (tab.title?.charAt(0).toUpperCase() || '?')}
                   </Text>
-                </View>
+                </Animated.View>
               )}
 
               <Text

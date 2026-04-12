@@ -14,20 +14,40 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
 
+/**
+ * Контекстное меню при долгом нажатии на ссылку или изображение.
+ *
+ * Props:
+ *   visible       — показывать меню
+ *   url           — URL ссылки или src изображения
+ *   elementType   — 'link' | 'image'
+ *   onClose       — закрыть меню
+ *   onOpenInNewTab(url) — открыть в новой вкладке
+ *   onDownload(url)     — скачать файл/изображение
+ */
 export default function LinkContextMenu({
   visible,
   url,
-  linkText,
+  elementType = 'link',
   onClose,
+  onNavigateHere,
   onOpenInNewTab,
+  onDownload,
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(theme, insets), [theme, insets]);
 
+  const isImage = elementType === 'image';
+
   const displayUrl = url
     ? url.length > 70 ? url.substring(0, 70) + '…' : url
     : '';
+
+  const handleNavigateHere = () => {
+    if (onNavigateHere) onNavigateHere(url);
+    onClose();
+  };
 
   const handleCopyLink = async () => {
     await Clipboard.setStringAsync(url || '');
@@ -46,26 +66,77 @@ export default function LinkContextMenu({
     onClose();
   };
 
-  const actions = [
-    {
-      key: 'new-tab',
-      icon: 'add-circle-outline',
-      label: 'Открыть в новой вкладке',
-      onPress: handleOpenNewTab,
-    },
-    {
-      key: 'copy',
-      icon: 'copy-outline',
-      label: 'Копировать ссылку',
-      onPress: handleCopyLink,
-    },
-    {
-      key: 'share',
-      icon: 'share-outline',
-      label: 'Поделиться',
-      onPress: handleShare,
-    },
-  ];
+  const handleDownload = () => {
+    if (onDownload) onDownload(url);
+    onClose();
+  };
+
+  // Набор действий зависит от типа элемента
+  const actions = isImage
+    ? [
+        {
+          key: 'open-here',
+          icon: 'navigate-outline',
+          label: 'Открыть изображение',
+          onPress: handleNavigateHere,
+        },
+        {
+          key: 'new-tab',
+          icon: 'open-outline',
+          label: 'Открыть в новой вкладке',
+          onPress: handleOpenNewTab,
+        },
+        {
+          key: 'save-image',
+          icon: 'download-outline',
+          label: 'Сохранить изображение',
+          onPress: handleDownload,
+        },
+        {
+          key: 'copy-url',
+          icon: 'copy-outline',
+          label: 'Копировать адрес изображения',
+          onPress: handleCopyLink,
+        },
+        {
+          key: 'share',
+          icon: 'share-outline',
+          label: 'Поделиться',
+          onPress: handleShare,
+        },
+      ]
+    : [
+        {
+          key: 'open-here',
+          icon: 'navigate-outline',
+          label: 'Открыть',
+          onPress: handleNavigateHere,
+        },
+        {
+          key: 'new-tab',
+          icon: 'add-circle-outline',
+          label: 'Открыть в новой вкладке',
+          onPress: handleOpenNewTab,
+        },
+        {
+          key: 'download',
+          icon: 'download-outline',
+          label: 'Скачать файл по ссылке',
+          onPress: handleDownload,
+        },
+        {
+          key: 'copy',
+          icon: 'copy-outline',
+          label: 'Копировать ссылку',
+          onPress: handleCopyLink,
+        },
+        {
+          key: 'share',
+          icon: 'share-outline',
+          label: 'Поделиться',
+          onPress: handleShare,
+        },
+      ];
 
   return (
     <Modal
@@ -76,10 +147,10 @@ export default function LinkContextMenu({
     >
       <Pressable style={styles.overlay} onPress={onClose}>
         <Pressable style={styles.sheet}>
-          {/* URL preview */}
+          {/* Превью URL / тип элемента */}
           <View style={styles.urlPreview}>
             <Ionicons
-              name="link-outline"
+              name={isImage ? 'image-outline' : 'link-outline'}
               size={14}
               color={theme.textTertiary}
               style={styles.urlIcon}
@@ -91,7 +162,7 @@ export default function LinkContextMenu({
 
           <View style={styles.divider} />
 
-          {/* Actions */}
+          {/* Действия */}
           {actions.map((action, idx) => (
             <TouchableOpacity
               key={action.key}
@@ -112,7 +183,7 @@ export default function LinkContextMenu({
             </TouchableOpacity>
           ))}
 
-          {/* Cancel */}
+          {/* Отмена */}
           <TouchableOpacity style={styles.cancelButton} onPress={onClose} activeOpacity={0.7}>
             <Text style={styles.cancelText}>Отмена</Text>
           </TouchableOpacity>

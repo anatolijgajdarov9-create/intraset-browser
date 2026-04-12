@@ -11,7 +11,7 @@ import {
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { getDownloads, setDownloadsList, removeDownload, clearDownloads } from '../utils/storage';
 import { useTheme } from '../hooks/useTheme';
@@ -115,6 +115,37 @@ export default function DownloadsScreen() {
     );
   };
 
+  const handleRetry = async (download) => {
+    try {
+      // Сбрасываем статус на "загружается"
+      const current = await getDownloads();
+      await setDownloadsList(
+        current.map(d => d.id === download.id ? { ...d, status: 'downloading', uri: null } : d)
+      );
+      await loadDownloads();
+
+      const downloadsDir = FileSystem.documentDirectory + 'downloads/';
+      const dirInfo = await FileSystem.getInfoAsync(downloadsDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
+      }
+      const { uri } = await FileSystem.downloadAsync(download.url, downloadsDir + download.filename);
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      const updated = await getDownloads();
+      await setDownloadsList(
+        updated.map(d => d.id === download.id ? { ...d, uri, size: fileInfo.size || null, status: 'completed' } : d)
+      );
+      await loadDownloads();
+    } catch (e) {
+      const failed = await getDownloads();
+      await setDownloadsList(
+        failed.map(d => d.id === download.id ? { ...d, status: 'failed' } : d)
+      );
+      await loadDownloads();
+      Alert.alert('Ошибка', `Не удалось скачать файл: ${e.message}`);
+    }
+  };
+
   const handleClearAll = async () => {
     Alert.alert(
       'Очистить загрузки?',
@@ -184,9 +215,22 @@ export default function DownloadsScreen() {
           </Text>
         </View>
         {!isDownloading && (
-          <TouchableOpacity style={styles.shareButton} onPress={() => isFailed ? handleDelete(item.id) : handleShareFile(item)}>
-            <Ionicons name={isFailed ? 'trash-outline' : 'share-outline'} size={20} color={isFailed ? theme.error : theme.primary} />
-          </TouchableOpacity>
+          <View style={styles.actions}>
+            {isFailed ? (
+              <>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleRetry(item)}>
+                  <Ionicons name="refresh-outline" size={20} color={theme.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleDelete(item.id)}>
+                  <Ionicons name="trash-outline" size={20} color={theme.error} />
+                </TouchableOpacity>
+              </>
+            ) : (
+              <TouchableOpacity style={styles.actionBtn} onPress={() => handleShareFile(item)}>
+                <Ionicons name="share-outline" size={20} color={theme.primary} />
+              </TouchableOpacity>
+            )}
+          </View>
         )}
       </TouchableOpacity>
     );
@@ -305,7 +349,12 @@ const makeStyles = (theme, insets) => StyleSheet.create({
     fontSize: SIZES.textSm,
     color: theme.textSecondary,
   },
-  shareButton: {
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.paddingXs,
+  },
+  actionBtn: {
     width: 36,
     height: 36,
     justifyContent: 'center',

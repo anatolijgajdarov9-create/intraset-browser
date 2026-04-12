@@ -5,14 +5,17 @@ import { SIZES } from '../utils/theme';
 
 /**
  * Прогресс-бар загрузки страницы.
- * Если передан реальный progress (0-1) от onLoadProgress — использует его.
- * Иначе показывает фейковую анимацию до 85%.
+ * - Реальный прогресс от onLoadProgress (0→1) — плавно анимируется.
+ * - Фейковая анимация до 85% если реальный прогресс недоступен.
+ * - Мерцающий «гло» на переднем крае для визуального полиша.
  */
 export default function ProgressBar({ loading, progress, isPrivate }) {
   const theme = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
+  const glowAnim = useRef(new Animated.Value(0)).current;
   const [visible, setVisible] = useState(false);
   const fillAnim = useRef(null);
+  const glowLoop = useRef(null);
   const hasRealProgress = typeof progress === 'number';
 
   useEffect(() => {
@@ -29,8 +32,19 @@ export default function ProgressBar({ loading, progress, isPrivate }) {
         });
         fillAnim.current.start();
       }
+
+      // Пульсирующий гло на переднем крае
+      glowLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(glowAnim, { toValue: 1, duration: 480, useNativeDriver: true }),
+          Animated.timing(glowAnim, { toValue: 0, duration: 480, useNativeDriver: true }),
+        ])
+      );
+      glowLoop.current.start();
     } else {
       if (fillAnim.current) fillAnim.current.stop();
+      if (glowLoop.current) { glowLoop.current.stop(); glowLoop.current = null; }
+      glowAnim.setValue(0);
 
       Animated.timing(anim, {
         toValue: 1,
@@ -59,20 +73,35 @@ export default function ProgressBar({ loading, progress, isPrivate }) {
 
   if (!visible) return null;
 
-  const color = isPrivate ? theme.progressBarPrivate : theme.progressBar;
+  const barColor = isPrivate ? theme.progressBarPrivate : theme.progressBar;
 
   return (
     <View style={{ height: SIZES.progressBarHeight, backgroundColor: 'transparent', overflow: 'hidden' }}>
+      {/* Основная полоса прогресса */}
       <Animated.View
         style={{
           height: SIZES.progressBarHeight,
-          backgroundColor: color,
+          backgroundColor: barColor,
           width: anim.interpolate({
             inputRange: [0, 1],
             outputRange: ['0%', '100%'],
           }),
         }}
-      />
+      >
+        {/* Светлый гло-оверлей на переднем крае */}
+        <Animated.View
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: 32,
+            backgroundColor: 'rgba(255,255,255,0.55)',
+            opacity: glowAnim,
+            borderRadius: SIZES.progressBarHeight / 2,
+          }}
+        />
+      </Animated.View>
     </View>
   );
 }

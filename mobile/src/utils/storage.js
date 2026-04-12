@@ -1,5 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// Временная метка старта текущей сессии (модульный уровень — не персистируется)
+// Обнуляется при каждом запуске приложения.
+export const SESSION_START_TIME = Date.now();
+
 // Ключи хранилища
 const KEYS = {
   BOOKMARKS: 'intra-bookmarks',
@@ -203,8 +207,10 @@ function isTrackableUrl(url) {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) return false;
     const host = parsed.hostname;
-    if (!host || host.length < 3) return false;
-    if (host === 'localhost' || /^127\./.test(host) || /^192\.168\./.test(host)) return false;
+    if (!host || host.length < 2) return false;
+    // Интранет-адреса (192.168.x.x, 10.x.x.x, 172.x.x.x) отслеживаем —
+    // это полноценные сайты для интранет-браузера.
+    if (host === 'localhost' || /^127\./.test(host)) return false;
     return true;
   } catch {
     return false;

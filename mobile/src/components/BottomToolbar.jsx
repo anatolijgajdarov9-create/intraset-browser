@@ -2,12 +2,13 @@ import React, { useMemo } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
 
 /**
  * Нижняя панель навигации браузера.
- * Back · Forward · Home · Bookmark · Tabs (с бейджем)
+ * Back · Forward · Home · Bookmark · Find · Tabs (с бейджем)
  */
 export default function BottomToolbar({
   canGoBack,
@@ -29,41 +30,53 @@ export default function BottomToolbar({
   const iconColor = isPrivate ? theme.private : theme.text;
   const disabledColor = isPrivate ? theme.privateBorder : theme.textTertiary;
 
+  // Вспомогательная функция: оборачивает обработчик хаптиком
+  const withHaptic = (fn, style = 'light') => () => {
+    if (style === 'medium') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else if (style === 'success') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    fn && fn();
+  };
+
   const buttons = [
     {
       key: 'back',
       icon: 'chevron-back',
-      onPress: onGoBack,
+      onPress: withHaptic(onGoBack),
       disabled: !canGoBack,
     },
     {
       key: 'forward',
       icon: 'chevron-forward',
-      onPress: onGoForward,
+      onPress: withHaptic(onGoForward),
       disabled: !canGoForward,
     },
     {
       key: 'home',
       icon: 'home-outline',
-      onPress: onHome,
+      onPress: withHaptic(onHome),
       disabled: false,
     },
     {
       key: 'bookmark',
       icon: isBookmarked ? 'star' : 'star-outline',
       color: isBookmarked ? '#f59e0b' : null,
-      onPress: onToggleBookmark,
+      onPress: withHaptic(onToggleBookmark, isBookmarked ? 'light' : 'success'),
       disabled: false,
     },
     {
       key: 'search',
       icon: 'search-outline',
-      onPress: onOpenFind,
+      onPress: withHaptic(onOpenFind),
       disabled: false,
     },
     {
       key: 'tabs',
-      onPress: onOpenTabs,
+      onPress: withHaptic(onOpenTabs, 'medium'),
       disabled: false,
       custom: true,
     },

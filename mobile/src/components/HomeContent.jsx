@@ -1,33 +1,65 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   View,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   ScrollView,
-  Keyboard,
   Image,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSettingsStore } from '../store/settingsStore';
-import { inputToUrl } from '../utils/url';
 import { getVisits, getBookmarks } from '../utils/storage';
+import { getDomain } from '../utils/url';
 import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
 
+// Поисковые системы для быстрого доступа
+const QUICK_ENGINES = [
+  { key: 'yandex',     label: 'Яндекс',     url: 'https://yandex.ru',         color: '#FF0000', letter: 'Я' },
+  { key: 'google',     label: 'Google',      url: 'https://www.google.com',    color: '#4285F4', letter: 'G' },
+  { key: 'duckduckgo', label: 'DuckDuckGo',  url: 'https://duckduckgo.com',    color: '#DE5833', letter: '🦆' },
+  { key: 'bing',       label: 'Bing',        url: 'https://www.bing.com',      color: '#00809D', letter: 'B' },
+];
+
 /**
  * Контент главной страницы браузера.
- * Используется внутри MainScreen вместо отдельного HomeScreen.
  */
 export default function HomeContent({ onNavigate, onOpenBookmarks, onOpenHistory, onOpenDownloads, onOpenSettings }) {
   const theme = useTheme();
-  const { settings } = useSettingsStore();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [frequentSites, setFrequentSites] = useState([]);
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  const [topSites, setTopSites] = useState([]);
   const [recentBookmarks, setRecentBookmarks] = useState([]);
 
-  const styles = useMemo(() => makeStyles(theme), [theme]);
+  // Анимация появления логотипа
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const logoScale  = useRef(new Animated.Value(0.75)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // Последовательная анимация: лого → контент
+    Animated.sequence([
+      Animated.parallel([
+        Animated.spring(logoScale, {
+          toValue: 1,
+          tension: 80,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(logoOpacity, {
+          toValue: 1,
+          duration: 350,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.timing(contentOpacity, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -35,23 +67,26 @@ export default function HomeContent({ onNavigate, onOpenBookmarks, onOpenHistory
 
   const loadData = async () => {
     try {
-      const visits = await getVisits();
-      const bookmarks = await getBookmarks();
-      const sorted = Object.values(visits)
+      const [visits, bookmarks] = await Promise.all([
+        getVisits(),
+        getBookmarks(),
+      ]);
+
+      // Топ сайты: сортируем по количеству визитов (кросс-сессионно!)
+      const topSitesList = Object.values(visits)
         .sort((a, b) => b.count - a.count)
-        .slice(0, 8);
-      setFrequentSites(sorted);
+        .slice(0, 8)
+        .map(v => ({
+          url: v.url,
+          title: v.title || getDomain(v.url),
+          favicon: v.favicon || null,
+        }));
+
+      setTopSites(topSitesList);
       setRecentBookmarks(bookmarks.slice(0, 6));
     } catch (e) {
       console.error('[HomeContent] Error loading data:', e);
     }
-  };
-
-  const handleSearch = () => {
-    Keyboard.dismiss();
-    if (!searchQuery.trim()) return;
-    const url = inputToUrl(searchQuery, settings.searchEngine);
-    if (url) onNavigate(url);
   };
 
   const quickActions = [
@@ -69,127 +104,169 @@ export default function HomeContent({ onNavigate, onOpenBookmarks, onOpenHistory
     >
       {/* Заголовок */}
       <View style={styles.header}>
-        <View style={styles.logoContainer}>
+        <Animated.View
+          style={[
+            styles.logoContainer,
+            { opacity: logoOpacity, transform: [{ scale: logoScale }] },
+          ]}
+        >
           <Ionicons name="globe" size={28} color={theme.primary} />
-        </View>
-        <Text style={styles.title}>Intra Browser</Text>
-        <Text style={styles.subtitle}>Введите адрес или поисковый запрос</Text>
+        </Animated.View>
+        <Animated.View style={{ opacity: logoOpacity, alignItems: 'center' }}>
+          <Text style={styles.title}>Intra Browser</Text>
+          <Text style={styles.subtitle}>Используйте адресную строку выше для поиска</Text>
+        </Animated.View>
       </View>
 
-      {/* Поисковая строка */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputWrapper}>
-          <Ionicons name="search" size={18} color={theme.textTertiary} style={styles.searchIcon} />
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
-            placeholder="Поиск или введите URL..."
-            placeholderTextColor={theme.addressBarText}
-            returnKeyType="go"
-            keyboardType="url"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-              <Ionicons name="close-circle" size={16} color={theme.textTertiary} />
-            </TouchableOpacity>
-          )}
-        </View>
-        <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
-          <Ionicons name="arrow-forward" size={20} color={theme.textInverse} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Быстрые действия */}
-      <View style={styles.quickActions}>
-        {quickActions.map((action) => (
-          <TouchableOpacity
-            key={action.label}
-            style={styles.actionButton}
-            onPress={action.onPress}
-          >
-            <View style={styles.actionIconBg}>
-              <Ionicons name={action.icon} size={22} color={theme.primary} />
-            </View>
-            <Text style={styles.actionText}>{action.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Частые сайты */}
-      {frequentSites.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Частые сайты</Text>
-          <View style={styles.grid}>
-            {frequentSites.map((site, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.gridItem}
-                onPress={() => onNavigate(site.url)}
-              >
-                {site.favicon ? (
-                  <Image source={{ uri: site.favicon }} style={styles.favicon} />
-                ) : (
-                  <View style={styles.faviconPlaceholder}>
-                    <Text style={styles.faviconText}>
-                      {site.title?.charAt(0).toUpperCase() || '?'}
-                    </Text>
-                  </View>
-                )}
-                <Text style={styles.gridItemTitle} numberOfLines={1}>
-                  {site.title || site.url}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Последние закладки */}
-      {recentBookmarks.length > 0 && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Закладки</Text>
-            <TouchableOpacity onPress={onOpenBookmarks}>
-              <Text style={styles.sectionMore}>Все</Text>
-            </TouchableOpacity>
-          </View>
-          {recentBookmarks.map((bookmark) => (
+      <Animated.View style={{ opacity: contentOpacity }}>
+        {/* Быстрый доступ к поисковым системам */}
+        <View style={styles.enginesSection}>
+          {QUICK_ENGINES.map((engine) => (
             <TouchableOpacity
-              key={bookmark.id}
-              style={styles.bookmarkItem}
-              onPress={() => onNavigate(bookmark.url)}
+              key={engine.key}
+              style={styles.engineButton}
+              onPress={() => onNavigate(engine.url)}
+              activeOpacity={0.7}
             >
-              {bookmark.favicon ? (
-                <Image source={{ uri: bookmark.favicon }} style={styles.bookmarkFavicon} />
-              ) : (
-                <View style={[styles.faviconPlaceholder, styles.bookmarkFaviconPlaceholder]}>
-                  <Text style={styles.faviconText}>
-                    {bookmark.title?.charAt(0).toUpperCase() || '★'}
-                  </Text>
-                </View>
-              )}
-              <View style={styles.bookmarkInfo}>
-                <Text style={styles.bookmarkTitle} numberOfLines={1}>
-                  {bookmark.title}
-                </Text>
-                <Text style={styles.bookmarkUrl} numberOfLines={1}>
-                  {bookmark.url}
+              <View style={[styles.engineIconBg, { backgroundColor: engine.color + '18' }]}>
+                <Text style={[styles.engineLetter, { color: engine.color }]}>
+                  {engine.letter}
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />
+              <Text style={styles.engineLabel} numberOfLines={1}>
+                {engine.label}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
-      )}
+
+        {/* Быстрые действия */}
+        <View style={styles.quickActions}>
+          {quickActions.map((action) => (
+            <TouchableOpacity
+              key={action.label}
+              style={styles.actionButton}
+              onPress={action.onPress}
+              activeOpacity={0.7}
+            >
+              <View style={styles.actionIconBg}>
+                <Ionicons name={action.icon} size={22} color={theme.primary} />
+              </View>
+              <Text style={styles.actionText}>{action.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Часто посещаемые сайты */}
+        {topSites.length > 0 && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { marginBottom: SIZES.paddingMd }]}>Часто посещаемые</Text>
+            <View style={styles.grid}>
+              {topSites.map((site, index) => (
+                <TopSiteItem
+                  key={index}
+                  site={site}
+                  onNavigate={onNavigate}
+                  styles={styles}
+                  theme={theme}
+                />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Последние закладки */}
+        {recentBookmarks.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Закладки</Text>
+              <TouchableOpacity onPress={onOpenBookmarks} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.sectionMore}>Все</Text>
+              </TouchableOpacity>
+            </View>
+            {recentBookmarks.map((bookmark) => (
+              <BookmarkItem
+                key={bookmark.id}
+                bookmark={bookmark}
+                onNavigate={onNavigate}
+                styles={styles}
+                theme={theme}
+              />
+            ))}
+          </View>
+        )}
+      </Animated.View>
 
       <View style={{ height: 24 }} />
     </ScrollView>
   );
 }
+
+// ─── Sub-components (поддерживают local state для favicon fallback) ──────────
+
+function TopSiteItem({ site, onNavigate, styles, theme }) {
+  const [faviconError, setFaviconError] = useState(false);
+  return (
+    <TouchableOpacity
+      style={styles.gridItem}
+      onPress={() => onNavigate(site.url)}
+      activeOpacity={0.7}
+    >
+      {site.favicon && !faviconError ? (
+        <Image
+          source={{ uri: site.favicon }}
+          style={styles.favicon}
+          onError={() => setFaviconError(true)}
+        />
+      ) : (
+        <View style={styles.faviconPlaceholder}>
+          <Text style={styles.faviconText}>
+            {site.title?.charAt(0).toUpperCase() || '?'}
+          </Text>
+        </View>
+      )}
+      <Text style={styles.gridItemTitle} numberOfLines={1}>
+        {site.title || site.url}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function BookmarkItem({ bookmark, onNavigate, styles, theme }) {
+  const [faviconError, setFaviconError] = useState(false);
+  return (
+    <TouchableOpacity
+      style={styles.bookmarkItem}
+      onPress={() => onNavigate(bookmark.url)}
+      activeOpacity={0.7}
+    >
+      {bookmark.favicon && !faviconError ? (
+        <Image
+          source={{ uri: bookmark.favicon }}
+          style={styles.bookmarkFavicon}
+          onError={() => setFaviconError(true)}
+        />
+      ) : (
+        <View style={[styles.faviconPlaceholder, styles.bookmarkFaviconPlaceholder]}>
+          <Text style={styles.faviconText}>
+            {bookmark.title?.charAt(0).toUpperCase() || '★'}
+          </Text>
+        </View>
+      )}
+      <View style={styles.bookmarkInfo}>
+        <Text style={styles.bookmarkTitle} numberOfLines={1}>
+          {bookmark.title}
+        </Text>
+        <Text style={styles.bookmarkUrl} numberOfLines={1}>
+          {bookmark.url}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />
+    </TouchableOpacity>
+  );
+}
+
+// ─── Стили ──────────────────────────────────────────────────────────────────
 
 const makeStyles = (theme) => StyleSheet.create({
   container: {
@@ -199,14 +276,14 @@ const makeStyles = (theme) => StyleSheet.create({
   header: {
     alignItems: 'center',
     paddingTop: SIZES.paddingXl * 2,
-    paddingBottom: SIZES.paddingXl,
+    paddingBottom: SIZES.paddingLg,
     paddingHorizontal: SIZES.paddingLg,
   },
   logoContainer: {
     width: 64,
     height: 64,
     borderRadius: 16,
-    backgroundColor: '#ffffff',
+    backgroundColor: theme.backgroundSecondary,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: SIZES.paddingMd,
@@ -216,7 +293,7 @@ const makeStyles = (theme) => StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
     borderWidth: 0.5,
-    borderColor: 'rgba(0,0,0,0.07)',
+    borderColor: theme.border,
   },
   title: {
     fontSize: SIZES.text2Xl,
@@ -227,47 +304,48 @@ const makeStyles = (theme) => StyleSheet.create({
   subtitle: {
     fontSize: SIZES.textSm,
     color: theme.textSecondary,
+    textAlign: 'center',
   },
-  searchContainer: {
+  // ── Поисковые системы ──
+  enginesSection: {
     flexDirection: 'row',
-    marginHorizontal: SIZES.paddingLg,
-    marginBottom: SIZES.paddingLg,
-    gap: SIZES.paddingSm,
-  },
-  searchInputWrapper: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.addressBarBg,
-    borderRadius: SIZES.radiusLg,
-    borderWidth: 1,
-    borderColor: theme.addressBarBorder,
-    paddingHorizontal: SIZES.paddingMd,
-  },
-  searchIcon: {
-    marginRight: SIZES.paddingXs,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: SIZES.textMd,
-    color: theme.text,
+    justifyContent: 'space-around',
+    paddingHorizontal: SIZES.paddingLg,
     paddingVertical: SIZES.paddingMd,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.borderLight,
   },
-  clearButton: {
-    padding: SIZES.paddingXs,
+  engineButton: {
+    alignItems: 'center',
+    gap: SIZES.paddingXs,
+    minWidth: 60,
   },
-  searchButton: {
-    backgroundColor: theme.primary,
+  engineIconBg: {
+    width: 52,
+    height: 52,
     borderRadius: SIZES.radiusLg,
-    width: 48,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
+  engineLetter: {
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 28,
+  },
+  engineLabel: {
+    fontSize: SIZES.textXs,
+    color: theme.textSecondary,
+    textAlign: 'center',
+    maxWidth: 64,
+  },
+  // ── Быстрые действия ──
   quickActions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     paddingHorizontal: SIZES.paddingLg,
-    paddingBottom: SIZES.paddingLg,
+    paddingVertical: SIZES.paddingMd,
     borderBottomWidth: 1,
     borderBottomColor: theme.borderLight,
   },
@@ -288,6 +366,7 @@ const makeStyles = (theme) => StyleSheet.create({
     color: theme.textSecondary,
     textAlign: 'center',
   },
+  // ── Секции ──
   section: {
     paddingHorizontal: SIZES.paddingLg,
     paddingTop: SIZES.paddingLg,
@@ -311,6 +390,7 @@ const makeStyles = (theme) => StyleSheet.create({
     color: theme.primary,
     fontWeight: '500',
   },
+  // ── Топ сайты (сетка) ──
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -335,9 +415,6 @@ const makeStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  bookmarkFaviconPlaceholder: {
-    marginRight: SIZES.paddingMd,
-  },
   faviconText: {
     fontSize: SIZES.textLg,
     fontWeight: '700',
@@ -348,6 +425,7 @@ const makeStyles = (theme) => StyleSheet.create({
     color: theme.text,
     textAlign: 'center',
   },
+  // ── Закладки ──
   bookmarkItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -360,6 +438,11 @@ const makeStyles = (theme) => StyleSheet.create({
     height: 32,
     borderRadius: SIZES.radiusMd,
     marginRight: SIZES.paddingMd,
+  },
+  bookmarkFaviconPlaceholder: {
+    marginRight: SIZES.paddingMd,
+    width: 32,
+    height: 32,
   },
   bookmarkInfo: {
     flex: 1,

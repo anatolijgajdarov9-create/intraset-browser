@@ -8,7 +8,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const SYNC_VERSION = '1.0';
 const SYNC_FILE_NAME = 'intraset-sync.json';
@@ -151,6 +151,9 @@ export async function shareExportFile() {
       mimeType: 'application/json',
       dialogTitle: 'Экспорт данных Intraset Browser',
     });
+
+    // Сохраняем время последнего экспорта
+    await setLastSyncTime(Date.now());
 
     return { success: true };
   } catch (e) {

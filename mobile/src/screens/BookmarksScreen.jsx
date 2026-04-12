@@ -62,9 +62,19 @@ export default function BookmarksScreen() {
   // useTabStore нужен только через getState() в handleOpen
 
   const [bookmarks, setBookmarks] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editUrl, setEditUrl] = useState('');
+
+  const filteredBookmarks = useMemo(() => {
+    if (!searchQuery.trim()) return bookmarks;
+    const query = searchQuery.toLowerCase();
+    return bookmarks.filter(b =>
+      b.title?.toLowerCase().includes(query) ||
+      b.url?.toLowerCase().includes(query)
+    );
+  }, [searchQuery, bookmarks]);
 
   useEffect(() => { loadBookmarks(); }, []);
 
@@ -175,13 +185,33 @@ export default function BookmarksScreen() {
         </TouchableOpacity>
       </View>
 
-      {bookmarks.length > 0 ? (
+      {bookmarks.length > 0 && (
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={16} color={theme.textTertiary} style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Поиск в закладках..."
+            placeholderTextColor={theme.textTertiary}
+            clearButtonMode="while-editing"
+          />
+        </View>
+      )}
+
+      {filteredBookmarks.length > 0 ? (
         <FlatList
-          data={bookmarks}
+          data={filteredBookmarks}
           keyExtractor={(item) => item.id}
           renderItem={renderBookmark}
           contentContainerStyle={styles.list}
         />
+      ) : bookmarks.length > 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="search-outline" size={64} color={theme.textTertiary} />
+          <Text style={styles.emptyTitle}>Ничего не найдено</Text>
+          <Text style={styles.emptyText}>Попробуйте другой запрос</Text>
+        </View>
       ) : (
         <View style={styles.emptyState}>
           <Ionicons name="star-outline" size={64} color={theme.textTertiary} />
@@ -222,6 +252,23 @@ const makeStyles = (theme, insets) => StyleSheet.create({
     fontWeight: '600',
   },
   list: { padding: SIZES.paddingMd },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: SIZES.paddingMd,
+    backgroundColor: theme.addressBarBg,
+    borderRadius: SIZES.radiusLg,
+    borderWidth: 1,
+    borderColor: theme.addressBarBorder,
+    paddingHorizontal: SIZES.paddingMd,
+  },
+  searchIcon: { marginRight: SIZES.paddingXs },
+  searchInput: {
+    flex: 1,
+    fontSize: SIZES.textMd,
+    color: theme.text,
+    paddingVertical: SIZES.paddingMd,
+  },
   bookmarkItem: {
     flexDirection: 'row',
     alignItems: 'center',

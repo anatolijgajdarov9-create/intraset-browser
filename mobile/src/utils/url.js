@@ -71,8 +71,10 @@ export function isTrackableUrl(url) {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) return false;
     const host = parsed.hostname;
-    if (!host || host.length < 3) return false;
-    if (host === 'localhost' || /^127\./.test(host) || /^192\.168\./.test(host)) return false;
+    if (!host || host.length < 2) return false;
+    // Исключаем только истинный localhost — инранет-адреса (192.168.x.x, 10.x.x.x, 172.x.x.x)
+    // являются полноценными сайтами для интранет-браузера и должны отслеживаться.
+    if (host === 'localhost' || /^127\./.test(host)) return false;
     return true;
   } catch {
     return false;

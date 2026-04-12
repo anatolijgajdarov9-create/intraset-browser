@@ -49,7 +49,7 @@ export default function AddressBar({
   const debounceTimer = useRef(null);
 
   useEffect(() => {
-    if (isFocused && inputValue.length > 2) {
+    if (isFocused && inputValue.length >= 1) {
       if (debounceTimer.current) {
         clearTimeout(debounceTimer.current);
       }

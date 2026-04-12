@@ -9,11 +9,12 @@ import {
   Linking,
   Share,
   ScrollView,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useNavigation } from '@react-navigation/native';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { useTabStore } from '../store/tabStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -132,7 +133,7 @@ export default function MainScreen() {
     tabZoom,
     setTabZoom,
   } = useTabStore();
-  const { settings, toggleNightMode } = useSettingsStore();
+  const { settings, toggleNightMode, toggleDarkMode } = useSettingsStore();
 
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [blockedUrl, setBlockedUrl] = useState(null);
@@ -146,6 +147,7 @@ export default function MainScreen() {
   const [isOffline, setIsOffline] = useState(false);
   const [contextMenuVisible, setContextMenuVisible] = useState(false);
   const [contextMenuUrl, setContextMenuUrl] = useState('');
+  const [contextMenuElementType, setContextMenuElementType] = useState('link');
   // Режим чтения: { [tabId]: boolean } — не персистируется
   const [readingModes, setReadingModes] = useState({});
 
@@ -153,6 +155,8 @@ export default function MainScreen() {
   const activeTabIdRef = useRef(activeTabId);
   const activeTabRef = useRef(null);
   const findBarVisibleRef = useRef(false);
+  // Предыдущий поисковый термин — для определения смены запроса vs навигации пред/след
+  const findTermRef = useRef('');
 
   const activeTab = getActiveTab();
 
@@ -185,6 +189,48 @@ export default function MainScreen() {
     });
     return unsubscribe;
   }, []);
+
+  // Аппаратная кнопка «Назад» (Android)
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const onBackPress = () => {
+      const store = useTabStore.getState();
+
+      // 1. Активен домашний оверлей → снять его (как будто пользователь «вернулся» со страницы)
+      if (store.tabHomeOverlay[activeTabIdRef.current]) {
+        store.setTabHomeOverlay(activeTabIdRef.current, false);
+        return true;
+      }
+
+      // 2. WebView может вернуться назад
+      if (activeTabRef.current?.canGoBack) {
+        webViewRef.current?.goBack();
+        return true;
+      }
+
+      // 3. Мы на домашней странице (или нет активной вкладки) → диалог выхода
+      const tab = activeTabRef.current;
+      const isOnHome = !tab || tab.url === 'intra://home' || tab.isHome;
+      if (isOnHome) {
+        Alert.alert(
+          'Выйти из браузера?',
+          'Вы действительно хотите закрыть браузер?',
+          [
+            { text: 'Отмена', style: 'cancel' },
+            { text: 'Выйти', style: 'destructive', onPress: () => BackHandler.exitApp() },
+          ]
+        );
+        return true;
+      }
+
+      // 4. Мы на веб-странице, но вернуться назад нельзя → показать домашнюю страницу
+      //    (НИКОГДА не позволяем системе закрыть приложение без подтверждения)
+      store.setTabHomeOverlay(activeTabIdRef.current, true);
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, []); // refs всегда актуальны — deps пустые
 
   // При закрытии FindBar сбрасываем подсветку
   useEffect(() => {
@@ -353,6 +399,10 @@ export default function MainScreen() {
       case 'nightMode': {
         const newMode = !settings.nightMode;
         toggleNightMode();
+        // Синхронизируем тему интерфейса с ночным режимом
+        if (newMode !== settings.darkMode) {
+          toggleDarkMode();
+        }
         webViewRef.current?.injectJavaScript(newMode ? nightModeOnScript : nightModeOffScript);
         break;
       }
@@ -383,7 +433,7 @@ export default function MainScreen() {
         navigation.navigate('Settings');
         break;
     }
-  }, [handleReload, settings.nightMode, toggleNightMode, readingModes]);
+  }, [handleReload, settings.nightMode, settings.darkMode, toggleNightMode, toggleDarkMode, readingModes]);
 
   // ─── Масштаб текста ──────────────────────────────────────────────────────────
 
@@ -520,23 +570,78 @@ export default function MainScreen() {
     })();
   `;
 
-  // Определение долгого нажатия на ссылку → контекстное меню
+  // Определение долгого нажатия на ссылку или изображение → контекстное меню
   const linkLongPressScript = `(function(){
     var _lpt;
     document.addEventListener('touchstart', function(e){
-      var a = e.target.closest('a[href]');
-      if (!a) return;
+      var a   = e.target.closest('a[href]');
+      var img = e.target.closest('img[src]');
+      if (!a && !img) return;
       _lpt = setTimeout(function(){
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type:'__linkContext',
-          url: a.href,
-          text: (a.innerText||a.textContent||'').trim().substring(0,80)
-        }));
+        var payload;
+        if (img && img.src) {
+          // Изображение (может быть одновременно обёрнуто в <a>)
+          payload = {
+            type: '__linkContext',
+            elementType: 'image',
+            url: img.src,
+          };
+        } else {
+          // Ссылка
+          payload = {
+            type: '__linkContext',
+            elementType: 'link',
+            url: a.href,
+            text: (a.innerText || a.textContent || '').trim().substring(0, 80),
+          };
+        }
+        window.ReactNativeWebView.postMessage(JSON.stringify(payload));
       }, 500);
     }, {passive:true});
-    document.addEventListener('touchend', function(){ clearTimeout(_lpt); }, {passive:true});
+    document.addEventListener('touchend',  function(){ clearTimeout(_lpt); }, {passive:true});
     document.addEventListener('touchmove', function(){ clearTimeout(_lpt); }, {passive:true});
   })(); true;`;
+
+  // ─── Принудительная светлая тема на сайтах ──────────────────────────────────
+  //
+  // Запускается ДО загрузки контента (injectedJavaScriptBeforeContentLoaded).
+  // Двойная защита:
+  //   1. <meta name="color-scheme" content="light"> — говорит движку CSS,
+  //      что страница только светлая (@media prefers-color-scheme: dark не срабатывает)
+  //   2. Переопределение window.matchMedia — для JS-кода, читающего тему
+  //
+  // Всегда применяется, чтобы страницы оставались светлыми для CSS-фильтра
+  // ночного режима (иначе тёмная страница + инверсия = белый экран).
+  const forceLightBeforeScript = `
+    (function(){
+      try {
+        // 1. meta color-scheme: light — самый надёжный способ отключить dark-тему на уровне CSS
+        var m = document.createElement('meta');
+        m.name = 'color-scheme';
+        m.content = 'light';
+        document.head.appendChild(m);
+      } catch(e) {}
+      try {
+        // 2. Переопределяем window.matchMedia для JS-библиотек (React, Vue, MUI и т.д.)
+        var _mm = window.matchMedia.bind(window);
+        window.matchMedia = function(q) {
+          if (q && q.indexOf('prefers-color-scheme') !== -1) {
+            return {
+              matches: q.indexOf('dark') === -1,
+              media: q,
+              onchange: null,
+              addListener: function() {},
+              removeListener: function() {},
+              addEventListener: function() {},
+              removeEventListener: function() {},
+              dispatchEvent: function() { return false; },
+            };
+          }
+          return _mm(q);
+        };
+      } catch(e) {}
+    })(); true;
+  `;
 
   // CSS-инъекция ночного режима
   const nightModeOnScript = `(function(){
@@ -569,6 +674,7 @@ export default function MainScreen() {
 
   const handleFind = useCallback((term, direction) => {
     if (!term) {
+      findTermRef.current = '';
       webViewRef.current?.injectJavaScript(`
         (function() {
           var el = document.getElementById('__intra_find_style__');
@@ -577,6 +683,7 @@ export default function MainScreen() {
             var t = document.createTextNode(n.textContent);
             n.parentNode.replaceChild(t, n);
           });
+          window.__intraFindIdx = 0;
         })(); true;
       `);
       setFindMatchCount(0);
@@ -585,64 +692,111 @@ export default function MainScreen() {
     }
 
     if (Platform.OS === 'ios') {
-      // iOS поддерживает window.find()
-      const forward = direction !== 'backward';
       webViewRef.current?.injectJavaScript(`
-        window.find(${JSON.stringify(term)}, false, ${!forward}, true, false, true, false); true;
+        window.find(${JSON.stringify(term)}, false, ${direction === 'backward'}, true, false, true, false); true;
       `);
-    } else {
-      // Android: собственная подсветка через DOM
+      return;
+    }
+
+    // Android: новый запрос или навигация по результатам?
+    const isNewTerm = findTermRef.current !== term;
+    findTermRef.current = term;
+
+    if (isNewTerm) {
+      // Полный проход: подсветить все вхождения, прокрутить к первому
       webViewRef.current?.injectJavaScript(`
         (function() {
-          // Убираем предыдущую подсветку
+          // Стиль подсветки
           var prevStyle = document.getElementById('__intra_find_style__');
           if (!prevStyle) {
             var s = document.createElement('style');
             s.id = '__intra_find_style__';
-            s.textContent = '.__intra_hl__ { background: #fbbf24; color: #000; border-radius: 2px; }';
+            s.textContent = [
+              '.__intra_hl__         { background:#fbbf24; color:#000; border-radius:2px; }',
+              '.__intra_hl_active__  { background:#f97316!important; outline:2px solid #ea580c; }'
+            ].join('');
             document.head.appendChild(s);
           }
+          // Убираем старую подсветку
           document.querySelectorAll('.__intra_hl__').forEach(function(n) {
             var t = document.createTextNode(n.textContent);
             n.parentNode.replaceChild(t, n);
           });
 
-          // Находим вхождения
-          var term = ${JSON.stringify(term)};
-          var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-          var nodes = [];
+          // Находим вхождения через indexOf (без regexp-бага с lastIndex)
+          var term     = ${JSON.stringify(term)};
+          var termLow  = term.toLowerCase();
+          // Фильтр: пропускаем текст внутри <script>, <style>, <noscript>
+          var skipTags = {SCRIPT:1, STYLE:1, NOSCRIPT:1, TEXTAREA:1};
+          var walker   = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode: function(n) {
+                var p = n.parentElement;
+                while (p) {
+                  if (skipTags[p.tagName]) return NodeFilter.FILTER_REJECT;
+                  p = p.parentElement;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            }
+          );
+          var textNodes = [];
           var node;
-          while (node = walker.nextNode()) {
-            if (node.nodeValue.toLowerCase().indexOf(term.toLowerCase()) !== -1) {
-              nodes.push(node);
+          while ((node = walker.nextNode())) {
+            if (node.nodeValue.toLowerCase().indexOf(termLow) !== -1) {
+              textNodes.push(node);
             }
           }
 
-          nodes.forEach(function(node) {
+          var hlCount = 0;
+          textNodes.forEach(function(node) {
             var text = node.nodeValue;
-            var re = new RegExp('(' + term.replace(/[.*+?^{}$()|[\\\]\\\\]/g, '\\\\$&') + ')', 'gi');
+            var lText = text.toLowerCase();
             var frag = document.createDocumentFragment();
-            var parts = text.split(re);
-            parts.forEach(function(part) {
-              if (re.test(part)) {
-                var span = document.createElement('span');
-                span.className = '__intra_hl__';
-                span.textContent = part;
-                frag.appendChild(span);
-              } else {
-                frag.appendChild(document.createTextNode(part));
-              }
-            });
+            var pos = 0, idx;
+            while ((idx = lText.indexOf(termLow, pos)) !== -1) {
+              if (idx > pos) frag.appendChild(document.createTextNode(text.substring(pos, idx)));
+              var span = document.createElement('span');
+              span.className = '__intra_hl__';
+              span.textContent = text.substring(idx, idx + term.length);
+              frag.appendChild(span);
+              hlCount++;
+              pos = idx + term.length;
+            }
+            if (pos < text.length) frag.appendChild(document.createTextNode(text.substring(pos)));
             node.parentNode.replaceChild(frag, node);
           });
 
-          // Прокрутить к первому вхождению
-          var first = document.querySelector('.__intra_hl__');
-          if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Отметить первый как активный
+          window.__intraFindIdx = 0;
+          var items = document.querySelectorAll('.__intra_hl__');
+          items.forEach(function(el, i) {
+            el.classList.toggle('__intra_hl_active__', i === 0);
+          });
+          if (items[0]) items[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
 
           window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'findResult',
-            count: nodes.length
+            type: 'findResult', count: hlCount
+          }));
+        })(); true;
+      `);
+    } else {
+      // Навигация по уже найденным результатам (prev / next)
+      const delta = direction === 'backward' ? -1 : 1;
+      webViewRef.current?.injectJavaScript(`
+        (function() {
+          var items = document.querySelectorAll('.__intra_hl__');
+          if (!items.length) return;
+          var total = items.length;
+          window.__intraFindIdx = ((window.__intraFindIdx || 0) + ${delta} + total) % total;
+          items.forEach(function(el, i) {
+            el.classList.toggle('__intra_hl_active__', i === window.__intraFindIdx);
+          });
+          items[window.__intraFindIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'findNav', current: window.__intraFindIdx + 1
           }));
         })(); true;
       `);
@@ -658,13 +812,23 @@ export default function MainScreen() {
       } else if (data.type === 'findResult') {
         setFindMatchCount(data.count);
         setFindCurrentMatch(data.count > 0 ? 1 : 0);
+      } else if (data.type === 'findNav') {
+        // Обновляем текущий номер результата при навигации пред/след
+        setFindCurrentMatch(data.current);
       } else if (data.type === '__dialog') {
         Alert.alert(
           data.kind === 'alert' ? 'Сообщение' : 'Подтверждение',
           data.msg || ''
         );
+      } else if (data.type === '__download' && data.url) {
+        // Перехвачен клик по <a download> — скачиваем сами, чтобы попало в список загрузок
+        const dlUrl = data.url;
+        downloadFileAndSave(dlUrl)
+          .then(filename => Alert.alert('Готово', `«${filename}» сохранён в загрузки`))
+          .catch(e => Alert.alert('Ошибка загрузки', e.message));
       } else if (data.type === '__linkContext' && data.url) {
         setContextMenuUrl(data.url);
+        setContextMenuElementType(data.elementType || 'link');
         setContextMenuVisible(true);
       }
     } catch {
@@ -676,6 +840,15 @@ export default function MainScreen() {
   const handleOpenLinkInNewTab = useCallback((url) => {
     createTab(url, url, activeTabRef.current?.isPrivate || false);
   }, [createTab]);
+
+  // Скачать файл / изображение из контекстного меню
+  const handleContextMenuDownload = useCallback((url) => {
+    if (!url) return;
+    Alert.alert('Скачивание', 'Начинаю скачивание...');
+    downloadFileAndSave(url)
+      .then(filename => Alert.alert('Готово', `Файл «${filename}» сохранён в загрузки`))
+      .catch(e => Alert.alert('Ошибка', `Не удалось скачать: ${e.message}`));
+  }, []);
 
   // ─── Рендер ──────────────────────────────────────────────────────────────
 
@@ -794,7 +967,32 @@ export default function MainScreen() {
             onError={handleError}
             onFileDownload={handleFileDownload}
             onMessage={handleWebViewMessageExtended}
+            // Запускается ДО парсинга страницы: переопределяем matchMedia
+            // чтобы сайты думали что ОС в светлом режиме.
+            injectedJavaScriptBeforeContentLoaded={forceLightBeforeScript}
             injectedJavaScript={
+              // 1. Принудительно обновляем color-scheme после загрузки страницы:
+              //    некоторые сайты переписывают мета-тег через JS — восстанавливаем.
+              `(function(){
+                var m = document.querySelector('meta[name="color-scheme"]');
+                if (m) m.content = 'light';
+              })(); true;` + '\n' +
+              // 2. Перехват кликов на <a download> — чтобы загрузки попадали в наш список
+              `(function(){
+                document.addEventListener('click', function(e){
+                  var a = e.target.closest('a[download], a[href$=".pdf"], a[href$=".zip"], a[href$=".apk"], a[href$=".doc"], a[href$=".docx"], a[href$=".xls"], a[href$=".xlsx"], a[href$=".mp3"], a[href$=".mp4"]');
+                  if (!a || !a.href) return;
+                  // Только если явно помечено как download ИЛИ это известный тип файла
+                  if (a.hasAttribute('download') || /\.(pdf|zip|apk|doc|docx|xls|xlsx|mp3|mp4|avi|mkv|mov|wav|flac|rar|7z|csv|ppt|pptx|dmg|exe|deb)$/i.test(a.pathname || '')) {
+                    e.preventDefault();
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: '__download',
+                      url: a.href,
+                      filename: a.download || '',
+                    }));
+                  }
+                }, true);
+              })(); true;` + '\n' +
               extractFaviconScript + '\n' +
               dialogInterceptScript + '\n' +
               linkLongPressScript +
@@ -867,12 +1065,15 @@ export default function MainScreen() {
 
       <OfflineBanner visible={isOffline} />
 
-      {/* Контекстное меню длинного нажатия на ссылку */}
+      {/* Контекстное меню длинного нажатия на ссылку / изображение */}
       <LinkContextMenu
         visible={contextMenuVisible}
         url={contextMenuUrl}
+        elementType={contextMenuElementType}
         onClose={() => setContextMenuVisible(false)}
+        onNavigateHere={handleNavigate}
         onOpenInNewTab={handleOpenLinkInNewTab}
+        onDownload={handleContextMenuDownload}
       />
     </SafeAreaView>
   );
