@@ -297,6 +297,30 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   const inputRef = useRef(null);
   const textareaRef = useRef(null);
 
+  const loadChatHistoryList = React.useCallback(async () => {
+    if (!isElectron) return;
+    try {
+      const listRes = await window.electronAPI.aiHistoryList();
+      const sessions = Array.isArray(listRes) ? listRes : (listRes?.sessions || []);
+      setChatSessions(sessions);
+      const cur = await window.electronAPI.aiHistoryGetCurrent?.();
+      setCurrentSessionId(cur || null);
+    } catch (_) {
+      setChatSessions([]);
+    }
+  }, []);
+
+  const createNewSession = React.useCallback(async () => {
+    if (!isElectron) return;
+    try {
+      const res = await window.electronAPI.aiHistoryNewSession();
+      setCurrentSessionId(res?.sessionId || null);
+      setAiChat([]);
+      setPipelineStages([]);
+      setShowHistoryPanel(false);
+    } catch (_) {}
+  }, []);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [aiChat]);
@@ -307,6 +331,10 @@ export default function AiChatPage({ activeTab, selectionRequest, onSelectionHan
   }, [temperature, topP]);
 
   // Load chat history from main process on mount
+  useEffect(() => {
+    loadChatHistoryList();
+  }, [loadChatHistoryList]);
+
   // Finalize pipeline when generation ends
   useEffect(() => {
     if (!aiLoading && pipelineStages.length > 0) {

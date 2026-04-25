@@ -83,6 +83,9 @@ export default function SettingsPage({ onNavigate }) {
   const [compact, setCompact] = useState(() =>
     localStorage.getItem('intra-ui-compact') === 'true'
   );
+  const [darkMode, setDarkMode] = useState(() =>
+    localStorage.getItem('intra-dark-mode') === 'true'
+  );
 
   // Intranet
   const [intranetOnly, setIntranetOnly] = useState(() =>
@@ -134,6 +137,12 @@ export default function SettingsPage({ onNavigate }) {
     setCompact(val);
     saveSetting('ui-compact', val);
     window.dispatchEvent(new Event('storage'));
+  };
+
+  const handleDarkModeChange = (val) => {
+    setDarkMode(val);
+    saveSetting('dark-mode', val);
+    document.body.classList.toggle('intra-dark', val);
   };
 
   const handleIntranetChange = (val) => {
@@ -256,6 +265,7 @@ export default function SettingsPage({ onNavigate }) {
           </svg>
         }>
           <Toggle label="Анимации" description="Плавные переходы и эффекты" checked={animations} onChange={handleAnimationsChange} />
+          <Toggle label="Тёмная тема" description="Тёмное оформление интерфейса" checked={darkMode} onChange={handleDarkModeChange} />
           <Toggle label="Компактный режим" description="Уменьшенные отступы и шрифты" checked={compact} onChange={handleCompactChange} />
         </Section>
 

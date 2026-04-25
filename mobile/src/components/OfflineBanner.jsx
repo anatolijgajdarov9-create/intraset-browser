@@ -1,8 +1,11 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { Animated, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../hooks/useTheme';
 
 export default function OfflineBanner({ visible }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const slideAnim = useRef(new Animated.Value(-36)).current;
 
   useEffect(() => {
@@ -15,13 +18,13 @@ export default function OfflineBanner({ visible }) {
 
   return (
     <Animated.View style={[styles.banner, { transform: [{ translateY: slideAnim }] }]}>
-      <Ionicons name="wifi-outline" size={14} color="#fff" style={styles.icon} />
+      <Ionicons name="wifi-outline" size={14} color={theme.textInverse} style={styles.icon} />
       <Text style={styles.text}>Нет подключения к интернету</Text>
     </Animated.View>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme) => StyleSheet.create({
   banner: {
     position: 'absolute',
     top: 0,
@@ -30,7 +33,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#374151',
+    backgroundColor: theme.error,
     height: 36,
     zIndex: 999,
   },
@@ -39,7 +42,7 @@ const styles = StyleSheet.create({
   },
   text: {
     fontSize: 12,
-    color: '#ffffff',
+    color: theme.textInverse,
     fontWeight: '600',
   },
 });

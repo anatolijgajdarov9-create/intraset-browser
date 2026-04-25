@@ -30,6 +30,19 @@ function groupByDate(items) {
   return groups;
 }
 
+function groupByDomain(items) {
+  const groups = {};
+  items.forEach(item => {
+    let key = item.url;
+    try { key = new URL(item.url).hostname; } catch {}
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  });
+  return Object.fromEntries(
+    Object.entries(groups).sort(([a], [b]) => a.localeCompare(b, 'ru'))
+  );
+}
+
 function HistoryItemRow({ item, onPress, onDelete, styles, theme }) {
   const [faviconError, setFaviconError] = useState(false);
 
@@ -87,6 +100,7 @@ export default function HistoryScreen() {
 
   const [history, setHistory] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortMode, setSortMode] = useState('date');
 
   const filteredHistory = useMemo(() => {
     if (!searchQuery.trim()) return history;
@@ -98,8 +112,10 @@ export default function HistoryScreen() {
   }, [searchQuery, history]);
 
   const groupedHistory = useMemo(
-    () => Object.entries(groupByDate(filteredHistory)),
-    [filteredHistory]
+    () => sortMode === 'date'
+      ? Object.entries(groupByDate(filteredHistory))
+      : Object.entries(groupByDomain(filteredHistory)),
+    [filteredHistory, sortMode]
   );
 
   useEffect(() => { loadHistory(); }, []);
@@ -197,6 +213,26 @@ export default function HistoryScreen() {
             placeholderTextColor={theme.textTertiary}
             clearButtonMode="while-editing"
           />
+        </View>
+      )}
+
+      {/* Сортировка */}
+      {history.length > 0 && (
+        <View style={styles.sortContainer}>
+          <TouchableOpacity
+            style={[styles.sortButton, sortMode === 'date' && styles.sortButtonActive]}
+            onPress={() => setSortMode('date')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.sortButtonText, sortMode === 'date' && styles.sortButtonTextActive]}>По дате</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.sortButton, sortMode === 'domain' && styles.sortButtonActive]}
+            onPress={() => setSortMode('domain')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.sortButtonText, sortMode === 'domain' && styles.sortButtonTextActive]}>По домену</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -333,6 +369,32 @@ const makeStyles = (theme, insets) => StyleSheet.create({
   historyTime: {
     fontSize: SIZES.textXs,
     color: theme.textTertiary,
+  },
+  sortContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: SIZES.paddingMd,
+    paddingBottom: SIZES.paddingXs,
+    gap: SIZES.paddingXs,
+  },
+  sortButton: {
+    paddingVertical: SIZES.paddingXs,
+    paddingHorizontal: SIZES.paddingMd,
+    borderRadius: 99,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: theme.backgroundSecondary,
+  },
+  sortButtonActive: {
+    backgroundColor: theme.primary,
+    borderColor: theme.primary,
+  },
+  sortButtonText: {
+    fontSize: SIZES.textSm,
+    color: theme.textSecondary,
+    fontWeight: '500',
+  },
+  sortButtonTextActive: {
+    color: theme.textInverse,
   },
   emptyState: {
     flex: 1,

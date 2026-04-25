@@ -1,24 +1,20 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { useDownloads } from '../../hooks/useDownloads.jsx';
 import DownloadItem from './DownloadItem';
 import EmptyState from './EmptyState';
 
 export default function DownloadsPanel({
-  downloads: propDownloads,
+  downloads: propDownloads = [],
   onClose,
   onClearDownloads: propClear,
   onCancelDownload: propCancel,
   onRemoveDownload: propRemove,
   onShowInFolder,
 }) {
-  // If props are provided, use them; otherwise fall back to the hook
-  const hookData = !propDownloads ? useDownloads() : null;
-
-  const downloads = propDownloads || hookData?.downloads || [];
-  const isLoading = hookData?.isLoading ?? false;
-  const removeDownload = propRemove || hookData?.removeDownload || (() => {});
-  const clearDownloads = propClear || hookData?.clearDownloads || (() => {});
-  const cancelDownload = propCancel || hookData?.cancelDownload || (() => {});
+  const downloads = propDownloads;
+  const isLoading = false;
+  const removeDownload = propRemove || (() => {});
+  const clearDownloads = propClear || (() => {});
+  const cancelDownload = propCancel || (() => {});
 
   // Local speed tracking for prop-based mode
   const speedCache = useRef(new Map());

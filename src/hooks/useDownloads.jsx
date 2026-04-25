@@ -120,49 +120,45 @@ export function DownloadsProvider({ children }) {
 
 export function useDownloads() {
   const context = useContext(DownloadsContext);
-  if (!context) {
-    console.warn('[useDownloads] Not inside DownloadsProvider, creating standalone state');
-    const [downloads, setDownloads] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const speedCache = useRef(new Map());
-    const lastUpdateRef = useRef(new Map());
-    const isElectron = typeof window !== 'undefined' && window.electronAPI;
+  // Hooks must be called unconditionally — standalone state used only when no Provider
+  const [downloads, setDownloads] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const speedCache = useRef(new Map());
+  const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
-    useEffect(() => {
-      if (!isElectron) return;
-      const fetch = async () => {
-        const res = await window.electronAPI.getDownloads();
-        if (res?.success) {
-          setDownloads(res.downloads || []);
-        }
-      };
-      fetch();
-      const interval = setInterval(fetch, POLL_INTERVAL);
-      return () => clearInterval(interval);
-    }, []);
-
-    return {
-      downloads,
-      activeDownloads: downloads.filter(d => d.state === 'progressing'),
-      completedDownloads: downloads.filter(d => d.state === 'completed'),
-      errorDownloads: downloads.filter(d => ['interrupted', 'cancelled'].includes(d.state)),
-      isLoading,
-      removeDownload: (id) => {
-        setDownloads(prev => prev.filter(d => d.id !== id));
-        if (isElectron) window.electronAPI.removeDownload(id);
-      },
-      clearDownloads: () => {
-        setDownloads([]);
-        if (isElectron) window.electronAPI.clearDownloads();
-      },
-      cancelDownload: (id) => {
-        if (isElectron?.cancelDownload) window.electronAPI.cancelDownload(id);
-        setDownloads(prev => prev.filter(d => d.id !== id));
-      },
-      getDownloadSpeed: (id) => speedCache.current.get(id) || 0,
-      totalCount: downloads.length,
-      activeCount: downloads.filter(d => d.state === 'progressing').length
+  useEffect(() => {
+    if (context || !isElectron) return;
+    const fetch = async () => {
+      const res = await window.electronAPI.getDownloads();
+      if (res?.success) setDownloads(res.downloads || []);
     };
-  }
-  return context;
+    fetch();
+    const interval = setInterval(fetch, POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, []); // eslint-disable-line
+
+  if (context) return context;
+
+  return {
+    downloads,
+    activeDownloads: downloads.filter(d => d.state === 'progressing'),
+    completedDownloads: downloads.filter(d => d.state === 'completed'),
+    errorDownloads: downloads.filter(d => ['interrupted', 'cancelled'].includes(d.state)),
+    isLoading,
+    removeDownload: (id) => {
+      setDownloads(prev => prev.filter(d => d.id !== id));
+      if (isElectron) window.electronAPI.removeDownload(id);
+    },
+    clearDownloads: () => {
+      setDownloads([]);
+      if (isElectron) window.electronAPI.clearDownloads();
+    },
+    cancelDownload: (id) => {
+      if (isElectron && window.electronAPI.cancelDownload) window.electronAPI.cancelDownload(id);
+      setDownloads(prev => prev.filter(d => d.id !== id));
+    },
+    getDownloadSpeed: (id) => speedCache.current.get(id) || 0,
+    totalCount: downloads.length,
+    activeCount: downloads.filter(d => d.state === 'progressing').length
+  };
 }

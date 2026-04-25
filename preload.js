@@ -26,13 +26,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File dialog
   showOpenDialog: (options) => ipcRenderer.invoke('show-open-dialog', options),
 
-  // Event listeners (main → renderer)
-  onTabNavigated: (cb) => ipcRenderer.on('tab-navigated', (_e, data) => cb(data)),
-  onTabTitleUpdated: (cb) => ipcRenderer.on('tab-title-updated', (_e, data) => cb(data)),
-  onTabFaviconUpdated: (cb) => ipcRenderer.on('tab-favicon-updated', (_e, data) => cb(data)),
-  onTabLoading: (cb) => ipcRenderer.on('tab-loading', (_e, data) => cb(data)),
-  onTabNavState: (cb) => ipcRenderer.on('tab-can-go-back', (_e, data) => cb(data)),
-  onOpenNewTab: (cb) => ipcRenderer.on('open-new-tab', (_e, data) => cb(data)),
+  // Event listeners (main → renderer) — each returns a cleanup fn to allow proper useEffect teardown
+  onTabNavigated:    (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('tab-navigated',       fn); return () => ipcRenderer.removeListener('tab-navigated',       fn); },
+  onTabTitleUpdated: (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('tab-title-updated',   fn); return () => ipcRenderer.removeListener('tab-title-updated',   fn); },
+  onTabFaviconUpdated:(cb)=> { const fn = (_e, d) => cb(d); ipcRenderer.on('tab-favicon-updated', fn); return () => ipcRenderer.removeListener('tab-favicon-updated', fn); },
+  onTabLoading:      (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('tab-loading',         fn); return () => ipcRenderer.removeListener('tab-loading',         fn); },
+  onTabNavState:     (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('tab-can-go-back',     fn); return () => ipcRenderer.removeListener('tab-can-go-back',     fn); },
+  onOpenNewTab:      (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('open-new-tab',        fn); return () => ipcRenderer.removeListener('open-new-tab',        fn); },
+  onTabAudioState:   (cb) => { const fn = (_e, d) => cb(d); ipcRenderer.on('tab-audio-state',     fn); return () => ipcRenderer.removeListener('tab-audio-state',     fn); },
 
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),
   sidebarPanelToggled: (open) => ipcRenderer.invoke('sidebar-panel-toggled', { open }),
@@ -70,7 +71,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiHistoryGetCurrent: () => ipcRenderer.invoke('ai-history-get-current'),
   aiHistoryNewSession: () => ipcRenderer.invoke('ai-history-new-session'),
   aiAnalyzeSelection: (text, prompt) => ipcRenderer.invoke('ai-analyze-selection', { text, prompt }),
-  aiWebSearch:    (query)     => ipcRenderer.invoke('ai-web-search', { query }),
   // aiThinkResponse: (prompt) => ipcRenderer.invoke('ai-think-response', { prompt }), // DISABLED: мышление отключено
   aiFetchUrl:     (url)       => ipcRenderer.invoke('ai-fetch-url', { url }),
   aiWikiSearch:   (query)     => ipcRenderer.invoke('ai-wiki-search', { query }),
@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openBrowserMenu: (pos) => ipcRenderer.invoke('open-browser-menu', pos),
   showInFolder: (downloadId) => ipcRenderer.invoke('show-in-folder', { downloadId }),
   removeDownload: (downloadId) => ipcRenderer.invoke('remove-download', { downloadId }),
+  cancelDownload: (downloadId) => ipcRenderer.invoke('cancel-download', { downloadId }),
 
   // Интрасеть (intraset-network)
   intraGetStatus: () => ipcRenderer.invoke('intra-get-status'),

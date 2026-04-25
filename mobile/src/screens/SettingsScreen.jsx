@@ -17,7 +17,12 @@ import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
 import { shareExportFile, importData, getLastSyncTime, formatSyncTime } from '../utils/sync';
 import * as DocumentPicker from 'expo-document-picker';
-import { clearHistory, clearDownloads, setBookmarks, setVisits } from '../utils/storage';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import { clearHistory, clearDownloads, setBookmarks, setVisits, getBookmarks } from '../utils/storage';
+
+const escapeHtml = (str) =>
+  (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export default function SettingsScreen() {
   const navigation = useNavigation();
@@ -29,6 +34,8 @@ export default function SettingsScreen() {
   const [lastSync, setLastSync] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isExportingHtml, setIsExportingHtml] = useState(false);
+  const [isImportingHtml, setIsImportingHtml] = useState(false);
 
   useEffect(() => {
     loadSyncStatus();
@@ -78,6 +85,85 @@ export default function SettingsScreen() {
       Alert.alert('Ошибка', e.message);
     }
     setIsExporting(false);
+  };
+
+  const handleExportBookmarksHtml = async () => {
+    setIsExportingHtml(true);
+    try {
+      const bookmarks = await getBookmarks();
+      if (bookmarks.length === 0) {
+        Alert.alert('Экспорт', 'Нет закладок для экспорта.');
+        return;
+      }
+      const addDate = Math.floor(Date.now() / 1000);
+      const rows = bookmarks
+        .map(b => `    <DT><A HREF="${escapeHtml(b.url)}" ADD_DATE="${addDate}">${escapeHtml(b.title || b.url)}</A>`)
+        .join('\n');
+      const html = [
+        '<!DOCTYPE NETSCAPE-Bookmark-file-1>',
+        '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
+        '<TITLE>Bookmarks</TITLE>',
+        '<H1>Bookmarks</H1>',
+        '<DL><p>',
+        rows,
+        '</DL><p>',
+      ].join('\n');
+      const path = `${FileSystem.cacheDirectory}bookmarks.html`;
+      await FileSystem.writeAsStringAsync(path, html, { encoding: FileSystem.EncodingType.UTF8 });
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert('Ошибка', 'Функция экспорта недоступна на этом устройстве.');
+        return;
+      }
+      await Sharing.shareAsync(path, { mimeType: 'text/html', dialogTitle: 'Экспорт закладок' });
+    } catch (e) {
+      Alert.alert('Ошибка экспорта', e.message);
+    } finally {
+      setIsExportingHtml(false);
+    }
+  };
+
+  const handleImportBookmarksHtml = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      setIsImportingHtml(true);
+      const uri = result.assets[0].uri;
+      const content = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
+      const regex = /<a\s+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
+      const parsed = [];
+      let match;
+      while ((match = regex.exec(content)) !== null) {
+        const url = match[1];
+        const title = match[2].trim() || url;
+        if (/^https?:\/\//.test(url)) parsed.push({ url, title });
+      }
+      if (parsed.length === 0) {
+        Alert.alert('Импорт', 'Закладки не найдены. Выберите файл закладок Chrome или Firefox.');
+        return;
+      }
+      const existing = await getBookmarks();
+      const existingUrls = new Set(existing.map(b => b.url));
+      const newOnes = parsed.filter(b => !existingUrls.has(b.url));
+      if (newOnes.length === 0) {
+        Alert.alert('Импорт', `Найдено ${parsed.length}, все уже существуют.`);
+        return;
+      }
+      const toAdd = newOnes.map(b => ({
+        ...b,
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        favicon: null,
+      }));
+      await setBookmarks([...toAdd, ...existing]);
+      Alert.alert('Импорт завершён', `Добавлено: ${newOnes.length} из ${parsed.length} закладок.`);
+    } catch (e) {
+      Alert.alert('Ошибка импорта', e.message);
+    } finally {
+      setIsImportingHtml(false);
+    }
   };
 
   const searchEngines = [
@@ -255,6 +341,21 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* Закладки */}
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>ЗАКЛАДКИ</Text>
+        <ActionRow
+          title="Экспорт в HTML"
+          description="Формат Chrome/Firefox (Netscape Bookmark)"
+          onPress={handleExportBookmarksHtml}
+        />
+        <ActionRow
+          title="Импорт из HTML"
+          description="Импортировать закладки из Chrome или Firefox"
+          onPress={handleImportBookmarksHtml}
+        />
+      </View>
+
       {/* Данные */}
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>ДАННЫЕ</Text>
@@ -284,7 +385,7 @@ export default function SettingsScreen() {
             <Ionicons name="globe" size={28} color={theme.primary} />
           </View>
           <Text style={styles.aboutName}>Intra Browser</Text>
-          <Text style={styles.aboutVersion}>Версия 1.2</Text>
+          <Text style={styles.aboutVersion}>Версия 1.3</Text>
           <Text style={styles.aboutDesc}>
             Мобильная версия интранет-ориентированного браузера
           </Text>

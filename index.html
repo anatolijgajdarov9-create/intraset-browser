@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Intra Browser</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" />
   <style>
     #root { display: none; }
     #root.app-ready { display: block; }
@@ -14,6 +17,43 @@
     }
     #loader.hidden { display: none; }
   </style>
+  <script>
+    (function () {
+      try {
+        // If the JS bundle never runs (missing asset / early crash), don't keep the loader forever.
+        var TIMEOUT_MS = 15000;
+        var startedAt = Date.now();
+
+        function setUiReady() {
+          try {
+            var root = document.getElementById('root');
+            var loader = document.getElementById('loader');
+            if (root) root.classList.add('app-ready');
+            if (loader) loader.classList.add('hidden');
+          } catch (_) {}
+        }
+
+        window.__intraSetUiReady = setUiReady;
+
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          var loader = document.getElementById('loader');
+          if (!root || !loader) return;
+          if (root.classList.contains('app-ready') || loader.classList.contains('hidden')) return;
+
+          // Reveal root so we can show a message even if React never mounted.
+          root.classList.add('app-ready');
+          loader.innerHTML =
+            '<div style="padding:20px;max-width:720px;line-height:1.35;">' +
+            '<div style="font-weight:700;font-size:16px;margin-bottom:8px;">Не удалось загрузить интерфейс</div>' +
+            '<div style="opacity:.8;margin-bottom:10px;">Прошло ' + Math.round((Date.now() - startedAt) / 1000) + 'с, но приложение не стало готово.</div>' +
+            '<div style="opacity:.8;margin-bottom:10px;">Если это desktop-сборка, проверьте <code>crash.log</code> в папке данных приложения (Electron userData).</div>' +
+            '<div style="opacity:.8;">Если это режим разработки — убедитесь, что Vite запущен на порту 3000.</div>' +
+            '</div>';
+        }, TIMEOUT_MS);
+      } catch (_) {}
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

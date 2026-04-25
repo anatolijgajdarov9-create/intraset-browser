@@ -4,6 +4,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Обнуляется при каждом запуске приложения.
 export const SESSION_START_TIME = Date.now();
 
+// Коллизионно-устойчивый ID: timestamp-base36 + 5 случайных символов
+function generateId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 // Ключи хранилища
 const KEYS = {
   BOOKMARKS: 'intra-bookmarks',
@@ -73,7 +78,7 @@ export async function setBookmarks(bookmarks) {
 
 export async function addBookmark(bookmark) {
   const bookmarks = await getBookmarks();
-  bookmarks.unshift({ ...bookmark, id: Date.now().toString() });
+  bookmarks.unshift({ ...bookmark, id: generateId() });
   await setBookmarks(bookmarks);
   return bookmarks;
 }
@@ -111,7 +116,7 @@ export async function addHistoryEntry(entry) {
   const history = await getHistory();
   // Убираем дубли
   const filtered = history.filter(h => h.url !== entry.url);
-  filtered.unshift({ ...entry, id: Date.now().toString(), timestamp: Date.now() });
+  filtered.unshift({ ...entry, id: generateId(), timestamp: Date.now() });
   // Ограничиваем 200 записями
   const limited = filtered.slice(0, 200);
   await setHistory(limited);
@@ -141,7 +146,7 @@ export async function setDownloadsList(downloads) {
 
 export async function addDownload(download) {
   const downloads = await getDownloads();
-  downloads.unshift({ ...download, id: Date.now().toString(), date: Date.now() });
+  downloads.unshift({ ...download, id: generateId(), date: Date.now() });
   await setDownloadsList(downloads);
   return downloads;
 }

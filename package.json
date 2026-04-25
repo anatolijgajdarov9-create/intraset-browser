@@ -1,6 +1,6 @@
 {
   "name": "intra-browser",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Intra — браузер для интранет сетей",
   "author": "Intra Browser Team",
   "main": "main.js",
@@ -8,19 +8,32 @@
     "start": "concurrently \"vite --port 3000\" \"wait-on tcp:3000 && electron --disable-gpu .\"",
     "build": "node scripts/setup-wincse.js && vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "electron": "electron --disable-gpu .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.2",
+    "@babel/preset-react": "^7.28.5",
     "@electron/rebuild": "^3.6.0",
+    "@playwright/test": "^1.59.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@vitejs/plugin-react": "^4.2.0",
+    "babel-jest": "^30.3.0",
     "concurrently": "^8.2.0",
     "cross-env": "^7.0.3",
     "electron": "^27.0.0",
     "electron-builder": "^24.6.4",
+    "jest": "^30.3.0",
+    "jest-environment-jsdom": "^30.3.0",
+    "playwright": "^1.59.1",
     "rcedit": "^5.0.2",
     "vite": "^5.0.0",
     "wait-on": "^7.2.0"

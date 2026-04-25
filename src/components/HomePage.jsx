@@ -304,15 +304,37 @@ export default function HomePage({
 
   useEffect(() => {
     if (!isElectron) return;
-    const pollDownloads = async () => {
+    const loadDownloads = async () => {
       try {
         const res = await window.electronAPI.getDownloads();
         if (res?.success) setDownloads(res.downloads || []);
       } catch (e) { console.error('Downloads poll error:', e); }
     };
-    pollDownloads();
-    const interval = setInterval(pollDownloads, 1000);
-    return () => clearInterval(interval);
+    loadDownloads();
+
+    const upsert = (dl) => {
+      if (!dl?.id) return;
+      setDownloads(prev => {
+        const idx = prev.findIndex(x => x.id === dl.id);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = { ...next[idx], ...dl };
+          return next;
+        }
+        return [dl, ...prev];
+      });
+    };
+
+    const offStarted = window.electronAPI.onDownloadStarted?.((data) => {
+      if (data?.download) upsert(data.download);
+      else loadDownloads();
+    }) ?? (() => {});
+    const offUpdated = window.electronAPI.onDownloadUpdated?.((data) => {
+      if (data?.download) upsert(data.download);
+      else loadDownloads();
+    }) ?? (() => {});
+
+    return () => { offStarted(); offUpdated(); };
   }, []);
 
   const notifBtnRef = useRef(null);
@@ -335,9 +357,16 @@ export default function HomePage({
     setHistoryItems(getHistory(50));
   }, []); // обновляется при каждом монтировании (при возврате на домашнюю страницу)
 
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
   useEffect(() => {
-    if (!query.trim()) { setSuggestions([]); setSuggSelIdx(-1); return; }
-    const q = query.trim().toLowerCase();
+    const t = setTimeout(() => setDebouncedQuery(query), 140);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => {
+    if (!debouncedQuery.trim()) { setSuggestions([]); setSuggSelIdx(-1); return; }
+    const q = debouncedQuery.trim().toLowerCase();
+    if (q.length < 2) { setSuggestions([]); setSuggSelIdx(-1); return; }
     const seen = new Set();
     const results = [];
     try {
@@ -364,7 +393,7 @@ export default function HomePage({
     } catch {}
     setSuggestions(results);
     setSuggSelIdx(-1);
-  }, [query]);
+  }, [debouncedQuery]);
 
   const handleSearch = (e) => {
     if (suggestions.length > 0) {
@@ -607,9 +636,6 @@ export default function HomePage({
           )}
           <SBtn active={panel==='intranet'} label="Интрасеть" onClick={() => setPanel(p => p==='intranet'?null:'intranet')}
             icon={<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>}
-          />
-          <SBtn label="История" onClick={() => onNavigate('intra://history')}
-            icon={<svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><path strokeLinecap="round" d="M12 6v6l4 2"/></svg>}
           />
         </div>
 

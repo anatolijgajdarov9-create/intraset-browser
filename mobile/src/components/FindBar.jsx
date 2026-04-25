@@ -75,8 +75,8 @@ export default function FindBar({ visible, onClose, onSearch, matchCount, curren
 
       {/* Счётчик совпадений */}
       {term.length > 0 && (
-        <Text style={styles.counter}>
-          {matchCount > 0 ? `${currentMatch}/${matchCount}` : '0'}
+        <Text style={[styles.counter, matchCount === 0 && styles.counterNoResults]}>
+          {matchCount > 0 ? `${currentMatch}/${matchCount}` : 'Не найдено'}
         </Text>
       )}
 
@@ -127,8 +127,12 @@ const makeStyles = (theme) => StyleSheet.create({
   counter: {
     fontSize: SIZES.textSm,
     color: theme.textSecondary,
-    minWidth: 40,
+    minWidth: 68,
     textAlign: 'center',
+  },
+  counterNoResults: {
+    color: theme.error,
+    fontWeight: '600',
   },
   iconBtn: {
     width: 32,

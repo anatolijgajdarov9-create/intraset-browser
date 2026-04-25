@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -8,24 +8,58 @@ import {
   Alert,
   Image,
   TextInput,
+  Animated,
+  Modal,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getBookmarks, removeBookmark, addBookmark } from '../utils/storage';
 import * as Haptics from 'expo-haptics';
+import * as Clipboard from 'expo-clipboard';
 import { useTabStore } from '../store/tabStore';
 import { useTheme } from '../hooks/useTheme';
 import { SIZES } from '../utils/theme';
 
-function BookmarkItem({ item, onOpen, onEdit, onDelete, styles, theme }) {
+function SkeletonRow({ styles }) {
+  const opacity = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+  return (
+    <Animated.View style={[styles.skeletonItem, { opacity }]}>
+      <View style={styles.skeletonIcon} />
+      <View style={styles.skeletonText}>
+        <View style={styles.skeletonTitle} />
+        <View style={styles.skeletonUrl} />
+      </View>
+    </Animated.View>
+  );
+}
+
+function SheetAction({ icon, label, onPress, theme, styles, destructive }) {
+  return (
+    <TouchableOpacity style={styles.sheetAction} onPress={onPress} activeOpacity={0.7}>
+      <Ionicons name={icon} size={22} color={destructive ? theme.error : theme.text} style={styles.sheetActionIcon} />
+      <Text style={[styles.sheetActionText, destructive && { color: theme.error }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function BookmarkItem({ item, onOpen, onLongPress, onDelete, styles, theme }) {
   const [faviconError, setFaviconError] = useState(false);
 
   return (
     <TouchableOpacity
       style={styles.bookmarkItem}
       onPress={() => onOpen(item.url)}
-      onLongPress={() => onEdit(item)}
+      onLongPress={() => onLongPress(item)}
+      delayLongPress={400}
       activeOpacity={0.7}
     >
       <View style={styles.bookmarkIcon}>
@@ -62,10 +96,14 @@ export default function BookmarksScreen() {
   // useTabStore нужен только через getState() в handleOpen
 
   const [bookmarks, setBookmarks] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editUrl, setEditUrl] = useState('');
+  const [sheetItem, setSheetItem] = useState(null);
+  const [sheetVisible, setSheetVisible] = useState(false);
+  const sheetAnim = useRef(new Animated.Value(0)).current;
 
   const filteredBookmarks = useMemo(() => {
     if (!searchQuery.trim()) return bookmarks;
@@ -79,8 +117,10 @@ export default function BookmarksScreen() {
   useEffect(() => { loadBookmarks(); }, []);
 
   const loadBookmarks = async () => {
+    setIsLoading(true);
     const data = await getBookmarks();
     setBookmarks(data);
+    setIsLoading(false);
   };
 
   const handleOpen = (url) => {
@@ -126,6 +166,47 @@ export default function BookmarksScreen() {
     await loadBookmarks();
   };
 
+  const translateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [400, 0] });
+
+  const showSheet = (item) => {
+    setSheetItem(item);
+    setSheetVisible(true);
+    sheetAnim.setValue(0);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Animated.timing(sheetAnim, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+  };
+
+  const hideSheet = (callback) => {
+    Animated.timing(sheetAnim, { toValue: 0, duration: 220, useNativeDriver: true }).start(() => {
+      setSheetVisible(false);
+      setSheetItem(null);
+      callback?.();
+    });
+  };
+
+  const handleSheetEdit = () => {
+    const item = sheetItem;
+    hideSheet(() => handleEdit(item));
+  };
+
+  const handleSheetDelete = () => {
+    const item = sheetItem;
+    hideSheet(() => handleDelete(item.id));
+  };
+
+  const handleSheetCopy = async () => {
+    if (sheetItem?.url) await Clipboard.setStringAsync(sheetItem.url);
+    hideSheet();
+  };
+
+  const handleSheetOpenNewTab = () => {
+    const item = sheetItem;
+    hideSheet(() => {
+      useTabStore.getState().createTab(item.url, item.title || item.url);
+      navigation.goBack();
+    });
+  };
+
   const handleCancelEdit = () => {
     setEditingId(null);
     setEditTitle('');
@@ -168,7 +249,7 @@ export default function BookmarksScreen() {
       <BookmarkItem
         item={item}
         onOpen={handleOpen}
-        onEdit={handleEdit}
+        onLongPress={showSheet}
         onDelete={handleDelete}
         styles={styles}
         theme={theme}
@@ -199,7 +280,11 @@ export default function BookmarksScreen() {
         </View>
       )}
 
-      {filteredBookmarks.length > 0 ? (
+      {isLoading ? (
+        <View style={styles.list}>
+          {[1, 2, 3, 4, 5].map(i => <SkeletonRow key={i} styles={styles} />)}
+        </View>
+      ) : filteredBookmarks.length > 0 ? (
         <FlatList
           data={filteredBookmarks}
           keyExtractor={(item) => item.id}
@@ -221,6 +306,39 @@ export default function BookmarksScreen() {
           </Text>
         </View>
       )}
+      {/* Bottom Sheet */}
+      <Modal
+        visible={sheetVisible}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={() => hideSheet()}
+      >
+        <View style={styles.sheetOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            onPress={() => hideSheet()}
+            activeOpacity={1}
+          />
+          <Animated.View style={[styles.sheetPanel, { transform: [{ translateY }] }]}>
+            {sheetItem && (
+              <>
+                <View style={styles.sheetHandle} />
+                <View style={styles.sheetHeader}>
+                  <Text style={styles.sheetTitle} numberOfLines={1}>{sheetItem.title}</Text>
+                  <Text style={styles.sheetUrl} numberOfLines={1}>{sheetItem.url}</Text>
+                </View>
+                <View style={styles.sheetDivider} />
+                <SheetAction icon="open-outline" label="Открыть в новой вкладке" onPress={handleSheetOpenNewTab} theme={theme} styles={styles} />
+                <SheetAction icon="copy-outline" label="Копировать URL" onPress={handleSheetCopy} theme={theme} styles={styles} />
+                <SheetAction icon="create-outline" label="Редактировать" onPress={handleSheetEdit} theme={theme} styles={styles} />
+                <SheetAction icon="trash-outline" label="Удалить" onPress={handleSheetDelete} theme={theme} styles={styles} destructive />
+                <View style={{ height: insets.bottom + SIZES.paddingMd }} />
+              </>
+            )}
+          </Animated.View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -358,6 +476,87 @@ const makeStyles = (theme, insets) => StyleSheet.create({
     color: theme.textSecondary,
     fontSize: SIZES.textMd,
     fontWeight: '600',
+  },
+  skeletonItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: SIZES.paddingMd,
+    marginBottom: SIZES.paddingSm,
+    backgroundColor: theme.backgroundSecondary,
+    borderRadius: SIZES.radiusLg,
+  },
+  skeletonIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: SIZES.radiusMd,
+    backgroundColor: theme.border,
+    marginRight: SIZES.paddingMd,
+  },
+  skeletonText: { flex: 1, gap: SIZES.paddingXs },
+  skeletonTitle: {
+    height: 13,
+    width: '60%',
+    borderRadius: SIZES.radiusSm,
+    backgroundColor: theme.border,
+  },
+  skeletonUrl: {
+    height: 11,
+    width: '80%',
+    borderRadius: SIZES.radiusSm,
+    backgroundColor: theme.borderLight,
+  },
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  sheetPanel: {
+    backgroundColor: theme.background,
+    borderTopLeftRadius: SIZES.radiusLg,
+    borderTopRightRadius: SIZES.radiusLg,
+    paddingTop: SIZES.paddingXs,
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.border,
+    alignSelf: 'center',
+    marginBottom: SIZES.paddingSm,
+  },
+  sheetHeader: {
+    paddingHorizontal: SIZES.paddingLg,
+    paddingVertical: SIZES.paddingMd,
+  },
+  sheetTitle: {
+    fontSize: SIZES.textMd,
+    fontWeight: '600',
+    color: theme.text,
+    marginBottom: 2,
+  },
+  sheetUrl: {
+    fontSize: SIZES.textSm,
+    color: theme.textSecondary,
+  },
+  sheetDivider: {
+    height: 1,
+    backgroundColor: theme.border,
+    marginBottom: SIZES.paddingXs,
+  },
+  sheetAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.paddingLg,
+    paddingVertical: SIZES.paddingMd,
+  },
+  sheetActionIcon: {
+    marginRight: SIZES.paddingMd,
+    width: 24,
+  },
+  sheetActionText: {
+    fontSize: SIZES.textMd,
+    color: theme.text,
+    fontWeight: '500',
   },
   emptyState: {
     flex: 1,

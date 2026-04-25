@@ -3,6 +3,32 @@ const path = require('path');
 const fs = require('fs');
 const isDev = !app.isPackaged;
 
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  const logPath = path.join(app.getPath('userData'), 'crash.log');
+  const timestamp = new Date().toISOString();
+  const errorLog = `[${timestamp}] UNCAUGHT EXCEPTION: ${error.message}\n${error.stack}\n`;
+  console.error('[MAIN] Uncaught exception:', error);
+  try {
+    fs.appendFileSync(logPath, errorLog);
+  } catch (e) {
+    console.error('[MAIN] Failed to write crash log:', e);
+  }
+  app.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  const logPath = path.join(app.getPath('userData'), 'crash.log');
+  const timestamp = new Date().toISOString();
+  const errorLog = `[${timestamp}] UNHANDLED REJECTION: ${reason}\n`;
+  console.error('[MAIN] Unhandled rejection:', reason);
+  try {
+    fs.appendFileSync(logPath, errorLog);
+  } catch (e) {
+    console.error('[MAIN] Failed to write crash log:', e);
+  }
+});
+
 let mainWindow;
 let browserViews = new Map(); // tabId -> BrowserView
 let privateTabs = new Set();  // tabIds that are private (use ephemeral partition)
@@ -15,6 +41,15 @@ let debugModalWin = null;     // debug modal window
 const debugLogs = [];
 const MAX_DEBUG_LOGS = 500;
 
+function appendCrashLog(line) {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'crash.log');
+    fs.appendFileSync(logPath, line);
+  } catch (e) {
+    console.error('[MAIN] Failed to write crash log:', e);
+  }
+}
+
 function addDebugLog(tag, message, level = 'info') {
   const log = { time: new Date().toLocaleTimeString('ru-RU'), tag, level, message };
   debugLogs.push(log);
@@ -26,6 +61,7 @@ function addDebugLog(tag, message, level = 'info') {
 
 // Downloads storage (global)
 const downloads = new Map(); // downloadId -> { id, filename, url, savePath, receivedBytes, totalBytes, state, startTime }
+const activeDownloadItems = new Map(); // downloadId -> Electron DownloadItem (only while progressing)
 let downloadIdCounter = 0;
 const DOWNLOAD_DEBUG = false; // Диагностический лог для загрузок (включать при отладке)
 let pendingSavePath = null;  // Ожидающий путь для сохранения изображения (save-image)
@@ -93,21 +129,21 @@ const AI_PROVIDERS = {
   },
   anthropic: {
     name: 'Anthropic (Claude)',
-    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
+    models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
     apiUrl: 'https://api.anthropic.com/v1/messages',
     keyPrefix: 'sk-ant-',
     needsModel: true
   },
   google: {
     name: 'Google Gemini',
-    models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+    models: ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-pro-preview-05-06', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
     apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent',
     keyPrefix: 'AIza',
     needsModel: true
   },
   openrouter: {
     name: 'OpenRouter',
-    models: ['openai/gpt-4o', 'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.0-flash', 'meta-llama/llama-3.1-70b-instruct'],
+    models: ['openai/gpt-4o', 'openai/gpt-4o-mini', 'anthropic/claude-sonnet-4-6', 'google/gemini-2.0-flash', 'meta-llama/llama-3.1-70b-instruct'],
     apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
     keyPrefix: 'sk-or-',
     needsModel: true
@@ -469,6 +505,30 @@ function createMainWindow() {
     mainWindow.focus();
   });
 
+  // Telemetry for blank screen / infinite loader debugging
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL, isMainFrame) => {
+    const msg = `[${new Date().toISOString()}] MAIN_WINDOW did-fail-load (${isMainFrame ? 'main' : 'sub'}) ${errorCode} ${errorDesc} url=${validatedURL}\n`;
+    console.error('[MAIN_WINDOW] did-fail-load:', errorCode, errorDesc, validatedURL, { isMainFrame });
+    addDebugLog('MainWindow', msg.trim(), 'error');
+    appendCrashLog(msg);
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    const msg = `[${new Date().toISOString()}] MAIN_WINDOW render-process-gone reason=${details.reason} exitCode=${details.exitCode}\n`;
+    console.error('[MAIN_WINDOW] render-process-gone:', details);
+    addDebugLog('MainWindow', msg.trim(), 'error');
+    appendCrashLog(msg);
+  });
+
+  mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    // level: 0=verbose,1=info,2=warning,3=error
+    if (level < 2) return;
+    const lvl = level === 3 ? 'error' : 'warn';
+    const msg = `[${new Date().toISOString()}] RENDERER_CONSOLE level=${level} ${message} (${sourceId}:${line})\n`;
+    addDebugLog('RendererConsole', `${message} (${sourceId}:${line})`, lvl);
+    appendCrashLog(msg);
+  });
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:3000');
   } else {
@@ -505,6 +565,7 @@ function createMainWindow() {
         startTime: Date.now(),
       };
       downloads.set(downloadId, dl);
+      activeDownloadItems.set(downloadId, item);
       saveDownloadsToFile();
 
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -525,6 +586,7 @@ function createMainWindow() {
       });
 
       item.on('done', (e, state) => {
+        activeDownloadItems.delete(downloadId);
         dl.receivedBytes = item.getReceivedBytes();
         dl.totalBytes = item.getTotalBytes();
         dl.state = state === 'completed' ? 'completed' : (state === 'cancelled' ? 'cancelled' : 'interrupted');
@@ -565,16 +627,31 @@ function resizeBrowserView(view) {
 
 function setupBrowserViewEvents(view, tabId) {
   view.webContents.on('did-navigate', (_e, navUrl) => {
+    if (!navUrl) return;
     mainWindow.webContents.send('tab-navigated', { tabId, url: navUrl });
   });
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
+    if (!navUrl) return;
     mainWindow.webContents.send('tab-navigated', { tabId, url: navUrl });
   });
   view.webContents.on('page-title-updated', (_e, title) => {
     mainWindow.webContents.send('tab-title-updated', { tabId, title });
+    if (tabId === activeTabId && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setTitle(title ? `${title} — Intra Browser` : 'Intra Browser');
+    }
   });
   view.webContents.on('page-favicon-updated', (_e, favicons) => {
     mainWindow.webContents.send('tab-favicon-updated', { tabId, favicon: favicons[0] });
+  });
+  view.webContents.on('media-started-playing', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('tab-audio-state', { tabId, isPlaying: true });
+    }
+  });
+  view.webContents.on('media-paused', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('tab-audio-state', { tabId, isPlaying: false });
+    }
   });
   view.webContents.on('did-start-loading', () => {
     mainWindow.webContents.send('tab-loading', { tabId, loading: true });
@@ -888,7 +965,13 @@ ipcMain.handle('switch-tab', (_event, { tabId, isHome }) => {
       mainWindow.addBrowserView(view);
       mainWindow.setTopBrowserView(view);
       resizeBrowserView(view);
+      const title = view.webContents.getTitle();
+      if (title && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setTitle(`${title} — Intra Browser`);
+      }
     }
+  } else {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle('Intra Browser');
   }
 
   return { success: true };
@@ -2567,6 +2650,15 @@ ipcMain.handle('show-in-folder', (_event, { downloadId }) => {
 ipcMain.handle('remove-download', (_event, { downloadId }) => {
   downloads.delete(downloadId);
   saveDownloadsToFile();
+  return { success: true };
+});
+
+ipcMain.handle('cancel-download', (_event, { downloadId }) => {
+  const item = activeDownloadItems.get(downloadId);
+  if (item) {
+    try { item.cancel(); } catch {}
+    activeDownloadItems.delete(downloadId);
+  }
   return { success: true };
 });
 
