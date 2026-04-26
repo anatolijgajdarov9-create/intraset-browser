@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Вики — Интрасеть</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f7f8fc; color: #1e293b; min-height: 100vh; }
+    .header { padding: 20px 32px; display: flex; align-items: center; gap: 16px; background: white; border-bottom: 1px solid #e5e7eb; }
+    .back-btn { display: flex; align-items: center; gap: 6px; color: #64748b; text-decoration: none; font-size: 14px; }
+    .back-btn:hover { color: #2563eb; }
+    .page-title { font-size: 24px; font-weight: 700; }
+    .content { max-width: 800px; margin: 32px auto; padding: 0 24px; }
+    .wiki-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .wiki-card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      text-decoration: none;
+      color: inherit;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      transition: all 0.2s;
+    }
+    .wiki-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .wiki-card-icon { font-size: 24px; margin-bottom: 8px; }
+    .wiki-card-title { font-size: 15px; font-weight: 600; }
+    .article {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      line-height: 1.7;
+    }
+    .article h2 { font-size: 20px; margin-bottom: 12px; color: #2563eb; }
+    .article h3 { font-size: 16px; margin: 16px 0 8px; }
+    .article p { margin-bottom: 12px; color: #475569; }
+    .article code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    .article pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 12px 0; font-size: 13px; }
+    .article ul { margin: 8px 0 8px 20px; color: #475569; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/ui/dashboard" class="back-btn">← Панель управления</a>
+    <h1 class="page-title">Вики</h1>
+  </div>
+  <div class="content">
+    <!-- Topics list -->
+    <div id="wikiTopics">
+      <div class="wiki-grid">
+        <a href="#" class="wiki-card" onclick="showArticle('intro');return false;">
+          <div class="wiki-card-icon">🚀</div>
+          <div class="wiki-card-title">Начало работы</div>
+        </a>
+        <a href="#" class="wiki-card" onclick="showArticle('mesh');return false;">
+          <div class="wiki-card-icon">🌐</div>
+          <div class="wiki-card-title">Mesh сеть</div>
+        </a>
+        <a href="#" class="wiki-card" onclick="showArticle('reticulum');return false;">
+          <div class="wiki-card-icon">🔗</div>
+          <div class="wiki-card-title">Reticulum протокол</div>
+        </a>
+        <a href="#" class="wiki-card" onclick="showArticle('files');return false;">
+          <div class="wiki-card-icon">📁</div>
+          <div class="wiki-card-title">Файловая система</div>
+        </a>
+        <a href="#" class="wiki-card" onclick="showArticle('api');return false;">
+          <div class="wiki-card-icon">⚡</div>
+          <div class="wiki-card-title">API справочник</div>
+        </a>
+        <a href="#" class="wiki-card" onclick="showArticle('troubleshoot');return false;">
+          <div class="wiki-card-icon">🔧</div>
+          <div class="wiki-card-title">Устранение проблем</div>
+        </a>
+      </div>
+    </div>
+    <!-- Articles -->
+    <div id="articleView" class="hidden">
+      <a href="#" onclick="hideArticle();return false;" style="display:inline-block;margin-bottom:16px;color:#2563eb;text-decoration:none;">← Все статьи</a>
+      <div id="articleContent" class="article"></div>
+    </div>
+  </div>
+  <script>
+    var articles = {
+      intro: '<h2>Начало работы</h2><p>Интрасеть — автономная децентрализованная сеть, работающая без интернета. Каждый узел может обмениваться данными с другими через mesh-маршрутизацию.</p><h3>Быстрый старт</h3><ol style="margin:8px 0 8px 20px;color:#475569;"><li>Установите Intra Browser на все устройства</li><li>Подключите устройства к одной Wi-Fi сети</li><li>Узлы обнаружат друг друга автоматически через mDNS</li></ol><h3>Ручное подключение</h3><p>Если автообнаружение не работает, добавьте узел вручную через <code>Панель управления → Узлы сети</code>.</p>',
+      mesh: '<h2>Mesh сеть</h2><p>Интрасеть использует mesh-архитектуру: каждый узел может передавать данные через соседние узлы.</p><h3>Обнаружение узлов</h3><ul><li><strong>mDNS/Bonjour</strong> — автоматическое обнаружение в локальной сети</li><li><strong>Ручное добавление</strong> — указание IP:port</li><li><strong>Reticulum</strong> — подключение к Reticulum-совместимым сетям</li></ul><h3>Маршрутизация</h3><p>Пакеты передаются по кратчайшему пути. Если прямой маршрут недоступен, данные ретранслируются через промежуточные узлы.</p>',
+      reticulum: '<h2>Reticulum протокол</h2><p>Reticulum — криптографический сетевой стек, обеспечивающий безопасную связь между узлами.</p><h3>Компоненты</h3><ul><li><strong>Identity</strong> — криптографическая идентичность узла (Ed25519 + X25519)</li><li><strong>Destination</strong> — 10-байтовый адрес назначения</li><li><strong>Packet</strong> — формат пакета с шифрованием и подписью</li><li><strong>Link</strong> — зашифрованное соединение между двумя узлами</li></ul><h3>Порты</h3><pre>TCP: 3849 — Reticulum интерфейс\nUDP: 3850 — Discovery и broadcast</pre>',
+      files: '<h2>Файловая система</h2><p>Каждый узел имеет локальное хранилище файлов. Файлы можно обмениваться между узлами через P2P.</p><h3>Ограничения</h3><ul><li>Максимальный размер файла: 500 МБ</li><li>Хранение: <code>./data/files</code></li><li>Общие папки: <code>./data/shared</code></li></ul><h3>Передача файлов</h3><p>Файлы передаются чанками по 64 КБ с подтверждением каждого чанка (ACK). Это обеспечивает надёжную доставку даже при нестабильном соединении.</p>',
+      api: '<h2>API справочник</h2><h3>Основные эндпоинты</h3><pre>GET /api/status       — Статус сервера\nGET /api/nodes        — Список узлов\nGET /api/files        — Каталог файлов\nGET /api/files/:id    — Скачать файл\nGET /api/messages     — История сообщений\nPOST /api/messages    — Отправить сообщение\nPOST /api/nodes       — Добавить узел</pre><h3>WebSocket (порт 3848)</h3><pre>register    — Регистрация узла\nmessage     — Чат-сообщение\nbroadcast   — Рассылка всем\nfile-request — Запрос файла</pre>',
+      troubleshoot: '<h2>Устранение проблем</h2><h3>Узлы не обнаруживаются</h3><ul><li>Проверьте, что все устройства в одной сети</li><li>Убедитесь, что фаервол не блокирует порт 3847</li><li>Попробуйте добавить узел вручную</li></ul><h3>Файлы не передаются</h3><ul><li>Проверьте подключение через WebSocket</li><li>Убедитесь, что файл существует на диске</li><li>Проверьте права доступа к папке <code>data/files</code></li></ul><h3>Сервер не запускается</h3><ul><li>Убедитесь, что порты 3847-3850 свободны</li><li>Проверьте наличие <code>node_modules</code> (выполните <code>npm install</code>)</li></ul>'
+    };
+    function showArticle(id) {
+      document.getElementById('wikiTopics').classList.add('hidden');
+      document.getElementById('articleView').classList.remove('hidden');
+      document.getElementById('articleContent').innerHTML = articles[id] || '<p>Статья не найдена</p>';
+    }
+    function hideArticle() {
+      document.getElementById('wikiTopics').classList.remove('hidden');
+      document.getElementById('articleView').classList.add('hidden');
+    }
+  </script>
+</body>
+</html>

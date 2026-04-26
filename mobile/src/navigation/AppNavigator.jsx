@@ -10,6 +10,7 @@ import BookmarksScreen from '../screens/BookmarksScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import DownloadsScreen from '../screens/DownloadsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import IntranetScreen from '../screens/IntranetScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -46,6 +47,7 @@ export default function AppNavigator() {
         <Stack.Screen name="History"   component={HistoryScreen}    options={modalOptions} />
         <Stack.Screen name="Downloads" component={DownloadsScreen}  options={modalOptions} />
         <Stack.Screen name="Settings"  component={SettingsScreen}   options={modalOptions} />
+        <Stack.Screen name="Intranet"  component={IntranetScreen}   options={modalOptions} />
       </Stack.Navigator>
     </NavigationContainer>
   );

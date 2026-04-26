@@ -609,6 +609,7 @@ export default function MainScreen() {
             onOpenHistory={() => navigation.navigate('History')}
             onOpenDownloads={() => navigation.navigate('Downloads')}
             onOpenSettings={() => navigation.navigate('Settings')}
+            onOpenIntranet={() => navigation.navigate('Intranet')}
           />
         )}
 

@@ -25,7 +25,7 @@ const QUICK_ENGINES = [
 /**
  * Контент главной страницы браузера.
  */
-export default function HomeContent({ onNavigate, onOpenBookmarks, onOpenHistory, onOpenDownloads, onOpenSettings }) {
+export default function HomeContent({ onNavigate, onOpenBookmarks, onOpenHistory, onOpenDownloads, onOpenSettings, onOpenIntranet }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
@@ -90,10 +90,11 @@ export default function HomeContent({ onNavigate, onOpenBookmarks, onOpenHistory
   };
 
   const quickActions = [
-    { icon: 'bookmark-outline', label: 'Закладки', onPress: onOpenBookmarks },
-    { icon: 'time-outline',     label: 'История',  onPress: onOpenHistory },
-    { icon: 'download-outline', label: 'Загрузки', onPress: onOpenDownloads },
-    { icon: 'settings-outline', label: 'Настройки',onPress: onOpenSettings },
+    { icon: 'bookmark-outline',    label: 'Закладки',  onPress: onOpenBookmarks },
+    { icon: 'time-outline',        label: 'История',   onPress: onOpenHistory },
+    { icon: 'download-outline',    label: 'Загрузки',  onPress: onOpenDownloads },
+    { icon: 'git-network-outline', label: 'Интрасеть', onPress: onOpenIntranet },
+    { icon: 'settings-outline',    label: 'Настройки', onPress: onOpenSettings },
   ];
 
   return (

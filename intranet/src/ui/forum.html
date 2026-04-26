@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Форум — Интрасеть</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f7f8fc; color: #1e293b; min-height: 100vh; }
+    .header { padding: 20px 32px; display: flex; align-items: center; gap: 16px; background: white; border-bottom: 1px solid #e5e7eb; }
+    .back-btn { display: flex; align-items: center; gap: 6px; color: #64748b; text-decoration: none; font-size: 14px; }
+    .back-btn:hover { color: #2563eb; }
+    .page-title { font-size: 24px; font-weight: 700; }
+    .content { max-width: 800px; margin: 32px auto; padding: 0 24px; }
+    .topic {
+      background: white;
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      cursor: pointer;
+      transition: box-shadow 0.2s;
+    }
+    .topic:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .topic-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+    .topic-meta { font-size: 12px; color: #94a3b8; }
+    .new-topic {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .new-topic input, .new-topic textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      margin-bottom: 8px;
+    }
+    .new-topic textarea { min-height: 80px; resize: vertical; }
+    .btn {
+      padding: 10px 20px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .btn:hover { background: #1d4ed8; }
+    .empty { text-align: center; padding: 60px 20px; color: #94a3b8; }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/ui/dashboard" class="back-btn">← Панель управления</a>
+    <h1 class="page-title">Форум</h1>
+  </div>
+  <div class="content">
+    <div class="new-topic">
+      <input type="text" id="topicTitle" placeholder="Заголовок темы…">
+      <textarea id="topicBody" placeholder="Содержание…"></textarea>
+      <button class="btn" onclick="createTopic()">Создать тему</button>
+    </div>
+    <div id="topicList">
+      <div class="empty">
+        <div class="empty-icon">📋</div>
+        <p>Нет тем. Будьте первым!</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    const STORAGE_KEY = 'intra_forum_topics';
+    function getTopics() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+      catch(e) { return []; }
+    }
+    function saveTopics(topics) { localStorage.setItem(STORAGE_KEY, JSON.stringify(topics)); }
+    function renderTopics() {
+      const topics = getTopics();
+      const list = document.getElementById('topicList');
+      if (!topics.length) {
+        list.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><p>Нет тем. Будьте первым!</p></div>';
+        return;
+      }
+      list.innerHTML = topics.map(t =>
+        '<div class="topic">' +
+          '<div class="topic-title">' + esc(t.title) + '</div>' +
+          '<div class="topic-meta">' + esc(t.author || 'Аноним') + ' · ' + new Date(t.date).toLocaleString('ru') + '</div>' +
+        '</div>'
+      ).join('');
+    }
+    function createTopic() {
+      const title = document.getElementById('topicTitle').value.trim();
+      const body = document.getElementById('topicBody').value.trim();
+      if (!title) return;
+      const topics = getTopics();
+      topics.unshift({ title, body, author: 'Пользователь', date: Date.now(), id: Date.now() });
+      saveTopics(topics);
+      document.getElementById('topicTitle').value = '';
+      document.getElementById('topicBody').value = '';
+      renderTopics();
+    }
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    renderTopics();
+  </script>
+</body>
+</html>

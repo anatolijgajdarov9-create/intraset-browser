@@ -2777,9 +2777,143 @@ ipcMain.handle('get-tab-muted', (_event, { tabId }) => {
 // Интрасеть (intraset-network) IPC
 // ─────────────────────────────────────────────────────────────────────────────
 
+let intranetProcess = null;
+let intranetStarting = false;
+
+function getIntranetServerPath() {
+  try {
+    const cfgPath = path.join(app.getPath('userData'), 'intranet-path.json');
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      if (cfg.serverPath && fs.existsSync(cfg.serverPath)) return cfg.serverPath;
+    }
+  } catch (_) {}
+  // Default: bundled server inside intraset-browser/intranet/
+  return path.join(__dirname, 'intranet', 'src', 'server.js');
+}
+
+function broadcastIntraStatus(running) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('intra-process-status', { running });
+  }
+}
+
+async function waitForIntranet(maxMs = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    try {
+      const res = await fetch('http://127.0.0.1:3847/api/ping', { signal: AbortSignal.timeout(1000) });
+      if (res.ok) return true;
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, 400));
+  }
+  return false;
+}
+
+ipcMain.handle('intra-start', async () => {
+  if (intranetProcess) return { success: true, already: true };
+  if (intranetStarting) {
+    // Reset stuck state in case a previous attempt crashed mid-flight
+    intranetStarting = false;
+  }
+
+  const serverPath = getIntranetServerPath();
+  if (!fs.existsSync(serverPath)) {
+    return { success: false, error: `Файл сервера не найден: ${serverPath}` };
+  }
+
+  intranetStarting = true;
+  const stderrLines = [];
+  let spawnError = null;
+
+  try {
+    const intraDataDir = path.join(app.getPath('userData'), 'intranet-data');
+    const proc = spawn('node', [serverPath], {
+      cwd: path.dirname(path.dirname(serverPath)),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+      windowsHide: true,
+      env: { ...process.env, INTRANET_DATA_DIR: intraDataDir },
+    });
+
+    proc.stdout.on('data', (d) => console.log('[Intranet]', d.toString().trim()));
+    proc.stderr.on('data', (d) => {
+      const line = d.toString().trim();
+      console.error('[Intranet ERR]', line);
+      stderrLines.push(line);
+    });
+
+    proc.on('exit', (code) => {
+      console.log('[Intranet] Process exited, code:', code);
+      intranetProcess = null;
+      intranetStarting = false;
+      broadcastIntraStatus(false);
+    });
+
+    proc.on('error', (err) => {
+      console.error('[Intranet] Spawn error:', err.message);
+      spawnError = err.message;
+      intranetProcess = null;
+      intranetStarting = false;
+      broadcastIntraStatus(false);
+    });
+
+    const ready = await waitForIntranet(12000);
+    if (!ready) {
+      try { proc.kill(); } catch (_) {}
+      intranetProcess = null;
+      intranetStarting = false;
+      const detail = spawnError || stderrLines.slice(-3).join(' | ') || 'проверьте логи в консоли Electron';
+      return { success: false, error: `Сервер не ответил за 12 секунд. ${detail}` };
+    }
+
+    intranetProcess = proc;
+    intranetStarting = false;
+    broadcastIntraStatus(true);
+    return { success: true };
+  } catch (err) {
+    intranetStarting = false;
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('intra-stop', async () => {
+  if (!intranetProcess) return { success: true, already: true };
+  try {
+    intranetProcess.kill('SIGTERM');
+    await new Promise(r => setTimeout(r, 800));
+    if (intranetProcess) {
+      intranetProcess.kill('SIGKILL');
+    }
+    intranetProcess = null;
+    broadcastIntraStatus(false);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('intra-get-process-status', () => {
+  return { running: !!intranetProcess, starting: intranetStarting };
+});
+
+ipcMain.handle('intra-set-server-path', (_event, { serverPath }) => {
+  try {
+    const cfgPath = path.join(app.getPath('userData'), 'intranet-path.json');
+    fs.writeFileSync(cfgPath, JSON.stringify({ serverPath }));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('intra-get-server-path', () => {
+  return { serverPath: getIntranetServerPath() };
+});
+
 ipcMain.handle('intra-get-status', async () => {
   try {
-    const res = await fetch('http://localhost:3847/api/status');
+    const res = await fetch('http://127.0.0.1:3847/api/status');
     return await res.json();
   } catch (e) {
     return { error: 'Интрасеть недоступна', details: e.message };
@@ -2788,7 +2922,7 @@ ipcMain.handle('intra-get-status', async () => {
 
 ipcMain.handle('intra-get-nodes', async () => {
   try {
-    const res = await fetch('http://localhost:3847/api/nodes');
+    const res = await fetch('http://127.0.0.1:3847/api/nodes');
     return await res.json();
   } catch (e) {
     return { error: e.message };
@@ -2797,7 +2931,7 @@ ipcMain.handle('intra-get-nodes', async () => {
 
 ipcMain.handle('intra-get-files', async () => {
   try {
-    const res = await fetch('http://localhost:3847/api/files');
+    const res = await fetch('http://127.0.0.1:3847/api/files');
     return await res.json();
   } catch (e) {
     return { error: e.message };
@@ -2806,7 +2940,7 @@ ipcMain.handle('intra-get-files', async () => {
 
 ipcMain.handle('intra-add-node', async (_event, { host, port, name }) => {
   try {
-    const res = await fetch('http://localhost:3847/api/nodes', {
+    const res = await fetch('http://127.0.0.1:3847/api/nodes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ host, port, name })
@@ -2820,8 +2954,8 @@ ipcMain.handle('intra-add-node', async (_event, { host, port, name }) => {
 ipcMain.handle('intra-get-messages', async (_event, { contactId }) => {
   try {
     const url = contactId 
-      ? `http://localhost:3847/api/messages/${contactId}`
-      : 'http://localhost:3847/api/messages';
+      ? `http://127.0.0.1:3847/api/messages/${contactId}`
+      : 'http://127.0.0.1:3847/api/messages';
     const res = await fetch(url);
     return await res.json();
   } catch (e) {
@@ -2831,7 +2965,7 @@ ipcMain.handle('intra-get-messages', async (_event, { contactId }) => {
 
 ipcMain.handle('intra-send-message', async (_event, { receiverId, content }) => {
   try {
-    const res = await fetch('http://localhost:3847/api/messages', {
+    const res = await fetch('http://127.0.0.1:3847/api/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ receiverId, content })
@@ -2844,7 +2978,7 @@ ipcMain.handle('intra-send-message', async (_event, { receiverId, content }) => 
 
 ipcMain.handle('intra-get-contacts', async () => {
   try {
-    const res = await fetch('http://localhost:3847/api/messages/contacts');
+    const res = await fetch('http://127.0.0.1:3847/api/messages/contacts');
     return await res.json();
   } catch (e) {
     return { error: e.message, contacts: [] };
@@ -2853,7 +2987,7 @@ ipcMain.handle('intra-get-contacts', async () => {
 
 ipcMain.handle('intra-delete-node', async (_event, { nodeId }) => {
   try {
-    const res = await fetch(`http://localhost:3847/api/nodes/${nodeId}`, {
+    const res = await fetch(`http://127.0.0.1:3847/api/nodes/${nodeId}`, {
       method: 'DELETE'
     });
     return await res.json();
@@ -2864,7 +2998,7 @@ ipcMain.handle('intra-delete-node', async (_event, { nodeId }) => {
 
 ipcMain.handle('intra-ping-node', async (_event, { nodeId }) => {
   try {
-    const res = await fetch(`http://localhost:3847/api/nodes/${nodeId}/ping`);
+    const res = await fetch(`http://127.0.0.1:3847/api/nodes/${nodeId}/ping`);
     return await res.json();
   } catch (e) {
     return { reachable: false, error: e.message };
@@ -2873,7 +3007,7 @@ ipcMain.handle('intra-ping-node', async (_event, { nodeId }) => {
 
 ipcMain.handle('intra-delete-file', async (_event, { fileId }) => {
   try {
-    const res = await fetch(`http://localhost:3847/api/files/${fileId}`, {
+    const res = await fetch(`http://127.0.0.1:3847/api/files/${fileId}`, {
       method: 'DELETE'
     });
     return await res.json();
@@ -2890,7 +3024,7 @@ ipcMain.handle('intra-upload-file', async (_event, { filePath }) => {
     const blob = new Blob([fileBuffer]);
     formData.append('file', blob, fileName);
     
-    const res = await fetch('http://localhost:3847/api/files/upload', {
+    const res = await fetch('http://127.0.0.1:3847/api/files/upload', {
       method: 'POST',
       body: formData
     });
@@ -2902,21 +3036,60 @@ ipcMain.handle('intra-upload-file', async (_event, { filePath }) => {
 
 ipcMain.handle('intra-download-file', async (_event, { fileId, fileName }) => {
   try {
-    const { dialog, shell } = require('electron');
     const result = await dialog.showSaveDialog({
       title: 'Сохранить файл',
       defaultPath: fileName
     });
-    
+
     if (result.canceled || !result.filePath) {
       return { success: false, canceled: true };
     }
-    
-    const res = await fetch(`http://localhost:3847/api/files/${fileId}`);
-    const buffer = await res.buffer();
-    require('fs').writeFileSync(result.filePath, buffer);
-    
+
+    const res = await fetch(`http://127.0.0.1:3847/api/files/${fileId}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(result.filePath, buffer);
+
     return { success: true, path: result.filePath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('intra-update-settings', async (_event, { nodeName }) => {
+  try {
+    const res = await fetch('http://127.0.0.1:3847/api/settings/node', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodeName })
+    });
+    return await res.json();
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('intra-get-mesh-status', async () => {
+  try {
+    const res = await fetch('http://127.0.0.1:3847/api/mesh/status');
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('intra-mesh-start', async () => {
+  try {
+    const res = await fetch('http://127.0.0.1:3847/api/mesh/start', { method: 'POST' });
+    return await res.json();
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('intra-mesh-stop', async () => {
+  try {
+    const res = await fetch('http://127.0.0.1:3847/api/mesh/stop', { method: 'POST' });
+    return await res.json();
   } catch (e) {
     return { success: false, error: e.message };
   }

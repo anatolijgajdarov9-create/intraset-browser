@@ -1,4 +1,5 @@
 import React from 'react';
+import IntranetPanel from './IntranetPanel';
 
 const isElectron = typeof window.electronAPI !== 'undefined';
 
@@ -44,6 +45,10 @@ const PANEL_META = {
   downloads: {
     title: 'Загрузки',
     icon: <svg width="14" height="14" fill="none" stroke="#2563eb" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>,
+  },
+  intranet: {
+    title: 'Интрасеть',
+    icon: <svg width="14" height="14" fill="none" stroke="#2563eb" viewBox="0 0 24 24" strokeWidth="2"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><circle cx="12" cy="12" r="1.5" fill="#2563eb"/><line x1="12" y1="7" x2="12" y2="10.5" strokeLinecap="round"/><line x1="12" y1="10.5" x2="7" y2="17" strokeLinecap="round"/><line x1="12" y1="10.5" x2="17" y2="17" strokeLinecap="round"/><line x1="7" y1="19" x2="17" y2="19" strokeLinecap="round"/></svg>,
   },
   ai: {
     title: 'AI Модель',
@@ -447,6 +452,22 @@ export default function BrowserSidebar({
               onToggle={togglePanel}
             />
           ))}
+          {/* Интрасеть */}
+          <SBtn id="intranet" panel={panel} title="Интрасеть"
+            icon={
+              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+                <circle cx="12" cy="5"  r="2.5"/>
+                <circle cx="5"  cy="19" r="2.5"/>
+                <circle cx="19" cy="19" r="2.5"/>
+                <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
+                <line x1="12" y1="7.5" x2="12" y2="10" strokeLinecap="round"/>
+                <line x1="12" y1="10" x2="6.8" y2="16.8" strokeLinecap="round"/>
+                <line x1="12" y1="10" x2="17.2" y2="16.8" strokeLinecap="round"/>
+                <line x1="7.5" y1="19" x2="16.5" y2="19" strokeLinecap="round"/>
+              </svg>
+            }
+            onToggle={togglePanel}
+          />
           <div style={{ height: 1, background: '#e2e8f0', margin: '4px 6px' }} />
           <SBtn id="ai" panel={panel} title="AI Модель"
             icon={<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>}
@@ -504,21 +525,23 @@ export default function BrowserSidebar({
             zIndex: 301, display: 'flex', flexDirection: 'column',
             animation: panelClosing ? 'sideSlideOut 0.18s ease forwards' : 'sideSlide 0.2s ease',
           }}>
-            {/* Шапка панели */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid #f1f5f9' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                {panel && PANEL_META[panel]?.icon}
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>{panel && PANEL_META[panel]?.title}</span>
+            {/* Шапка панели — скрыта для Интрасети (у неё своя) */}
+            {panel !== 'intranet' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid #f1f5f9' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  {panel && PANEL_META[panel]?.icon}
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>{panel && PANEL_META[panel]?.title}</span>
+                </div>
+                <button onClick={closePanel} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#94a3b8', borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s, color 0.15s' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#1e293b'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#94a3b8'; }}
+                >
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
               </div>
-              <button onClick={closePanel} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#94a3b8', borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s, color 0.15s' }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#1e293b'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#94a3b8'; }}
-              >
-                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
-            </div>
+            )}
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: panel === 'intranet' ? 0 : 14 }}>
               {/* ── Закладки ── */}
               {panel === 'bookmarks' && (
                 <div>
@@ -568,6 +591,16 @@ export default function BrowserSidebar({
                   ) : histItems.map((item, i) => (
                     <HistoryItem key={i} item={item} onNavigate={url => { onNavigate(url); closePanel(); }} />
                   ))}
+                </div>
+              )}
+
+              {/* ── Интрасеть ── */}
+              {panel === 'intranet' && (
+                <div style={{ height: '100%', overflow: 'auto', margin: -14, padding: 0 }}>
+                  <IntranetPanel
+                    onClose={closePanel}
+                    onNavigate={(url) => { onNavigate(url); closePanel(); }}
+                  />
                 </div>
               )}
 

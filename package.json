@@ -1,6 +1,6 @@
 {
   "name": "intra-browser",
-  "version": "1.2.3",
+  "version": "1.2.2",
   "description": "Intra — браузер для интранет сетей",
   "author": "Intra Browser Team",
   "main": "main.js",
@@ -14,8 +14,18 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "bonjour": "^3.5.1",
+    "cors": "^2.8.6",
+    "crypto-js": "^4.2.0",
+    "express": "^4.22.1",
+    "multer": "^1.4.5-lts.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "sql.js": "^1.14.1",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
+    "uuid": "^9.0.1",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
@@ -56,12 +66,18 @@
       "browser-preload.js",
       "package.json",
       "intrabrowser-logo.ico",
-      "intrabrowser-logo.png"
+      "intrabrowser-logo.png",
+      "intranet/src/**",
+      "!intranet/src/data/**"
     ],
     "extraResources": [
       {
         "from": "llama server",
         "to": "llama server"
+      },
+      {
+        "from": "intranet/bin",
+        "to": "intranet/bin"
       }
     ],
     "win": {

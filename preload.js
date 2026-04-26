@@ -134,7 +134,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeDownload: (downloadId) => ipcRenderer.invoke('remove-download', { downloadId }),
   cancelDownload: (downloadId) => ipcRenderer.invoke('cancel-download', { downloadId }),
 
-  // Интрасеть (intraset-network)
+  // Интрасеть (intraset-network) — data API
   intraGetStatus: () => ipcRenderer.invoke('intra-get-status'),
   intraGetNodes: () => ipcRenderer.invoke('intra-get-nodes'),
   intraGetFiles: () => ipcRenderer.invoke('intra-get-files'),
@@ -147,4 +147,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   intraDeleteFile: (fileId) => ipcRenderer.invoke('intra-delete-file', { fileId }),
   intraUploadFile: (filePath) => ipcRenderer.invoke('intra-upload-file', { filePath }),
   intraDownloadFile: (fileId, fileName) => ipcRenderer.invoke('intra-download-file', { fileId, fileName }),
+
+  // Интрасеть — process & mesh control
+  intraStart: () => ipcRenderer.invoke('intra-start'),
+  intraStop: () => ipcRenderer.invoke('intra-stop'),
+  intraGetProcessStatus: () => ipcRenderer.invoke('intra-get-process-status'),
+  intraGetMeshStatus: () => ipcRenderer.invoke('intra-get-mesh-status'),
+  intraMeshStart: () => ipcRenderer.invoke('intra-mesh-start'),
+  intraMeshStop: () => ipcRenderer.invoke('intra-mesh-stop'),
+  intraUpdateSettings: (settings) => ipcRenderer.invoke('intra-update-settings', settings),
+  intraGetServerPath: () => ipcRenderer.invoke('intra-get-server-path'),
+  intraSetServerPath: (serverPath) => ipcRenderer.invoke('intra-set-server-path', { serverPath }),
+  onIntraProcessStatus: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on('intra-process-status', fn);
+    return () => ipcRenderer.removeListener('intra-process-status', fn);
+  },
 });

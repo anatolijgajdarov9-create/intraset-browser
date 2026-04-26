@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intra Network - Управление</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary:   #ffffff;
+      --bg-secondary: #f8fafc;
+      --bg-tertiary:  #f1f5f9;
+      --bg-hover:     #f8fafc;
+      --bg-active:    #eff6ff;
+      --border-subtle: rgba(0, 0, 0, 0.04);
+      --border-normal: #e2e8f0;
+      --border-accent: #dbeafe;
+      --text-primary:   #1e293b;
+      --text-secondary: #475569;
+      --text-muted:     #94a3b8;
+      --text-accent:    #2563eb;
+      --accent:       #2563eb;
+      --accent-light: #eff6ff;
+      --accent-hover: #1d4ed8;
+      --status-ok:   #22c55e;
+      --status-warn: #f59e0b;
+      --status-err:  #ef4444;
+      --font-ui:   'Manrope', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    html, body { 
+      height: 100%; 
+      background: var(--bg-primary); 
+      color: var(--text-primary); 
+      font-family: var(--font-ui); 
+      font-size: 13px; 
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app { display: flex; height: 100vh; }
+
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-normal);
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 8px;
+      margin-bottom: 20px;
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .logo-text {
+      font-weight: 700;
+      font-size: 15px;
+    }
+
+    .nav-section { margin-bottom: 20px; }
+
+    .nav-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 8px;
+      margin-bottom: 4px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: all 0.15s ease;
+    }
+
+    .nav-item:hover { background: var(--bg-hover); }
+    .nav-item.active { background: var(--accent-light); color: var(--accent); }
+    .nav-item.active .nav-icon { color: var(--accent); }
+
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      opacity: 0.7;
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      background: var(--accent);
+      color: white;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    /* Main content */
+    .main { flex: 1; overflow: auto; }
+
+    .header {
+      height: 56px;
+      border-bottom: 1px solid var(--border-normal);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--bg-primary);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .header-title {
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    .content { padding: 24px; }
+
+    /* Cards */
+    .card {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-normal);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    /* Stats grid */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+
+    .stat-card {
+      background: var(--bg-secondary);
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+      transition: transform 0.2s ease;
+    }
+
+    .stat-card:hover { transform: translateY(-2px); }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    .stat-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .stat-indicator.online { background: var(--status-ok); }
+    .stat-indicator.offline { background: var(--text-muted); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+      text-decoration: none;
+    }
+
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--bg-tertiary); color: var(--text-secondary); }
+    .btn-secondary:hover { background: var(--border-normal); }
+    .btn-success { background: var(--status-ok); color: white; }
+    .btn-danger { background: var(--status-err); color: white; }
+
+    /* Form elements */
+    input, select {
+      padding: 10px 14px;
+      border: 1px solid var(--border-normal);
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: var(--font-ui);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      transition: border-color 0.15s ease;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    input::placeholder { color: var(--text-muted); }
+
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+
+    .form-group { margin-bottom: 16px; }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    /* Node list */
+    .node-list { list-style: none; }
+
+    .node-item {
+      display: flex;
+      align-items: center;
+      padding: 14px;
+      border-bottom: 1px solid var(--border-normal);
+      transition: background 0.15s ease;
+    }
+
+    .node-item:last-child { border-bottom: none; }
+    .node-item:hover { background: var(--bg-secondary); }
+
+    .node-status {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 14px;
+    }
+
+    .node-status.online { background: var(--status-ok); box-shadow: 0 0 8px rgba(34, 197, 94, 0.4); }
+    .node-status.offline { background: var(--text-muted); }
+
+    .node-info { flex: 1; }
+
+    .node-name {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+
+    .node-details {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .node-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .node-action {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+      background: var(--bg-tertiary);
+      border: none;
+      transition: all 0.15s ease;
+    }
+
+    .node-action:hover { background: var(--accent-light); color: var(--accent); }
+
+    /* Status indicator */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.online { background: var(--status-ok); }
+    .status-dot.offline { background: var(--status-err); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Empty state */
+    .empty {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-muted);
+    }
+
+    .empty-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 12px;
+      opacity: 0.5;
+    }
+
+    /* Console output */
+    .console {
+      background: #1e293b;
+      color: #e2e8f0;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 16px;
+      border-radius: 8px;
+      max-height: 300px;
+      overflow: auto;
+      line-height: 1.6;
+    }
+
+    .console-line { margin-bottom: 4px; }
+    .console-time { color: #64748b; margin-right: 8px; }
+    .console-info { color: #60a5fa; }
+    .console-success { color: #4ade80; }
+    .console-warn { color: #fbbf24; }
+    .console-error { color: #f87171; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .modal-overlay.visible { opacity: 1; visibility: visible; }
+
+    .modal {
+      background: var(--bg-primary);
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 480px;
+      transform: translateY(20px);
+      transition: transform 0.2s ease;
+    }
+
+    .modal-overlay.visible .modal { transform: translateY(0); }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .modal-title { font-size: 18px; font-weight: 700; }
+
+    .modal-close {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+      background: var(--bg-tertiary);
+      border: none;
+    }
+
+    .modal-footer {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="logo">
+        <div class="logo-icon">IN</div>
+        <span class="logo-text">Intra Network</span>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">Основное</div>
+        <a href="#" class="nav-item active" data-view="dashboard">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Панель управления</span>
+        </a>
+        <a href="#" class="nav-item" data-view="nodes">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="20" cy="18" r="2"/><line x1="9.5" y1="10" x2="5.5" y2="7"/><line x1="14.5" y1="10" x2="18.5" y2="7"/><line x1="9.5" y1="14" x2="5.5" y2="17"/><line x1="14.5" y1="14" x2="18.5" y2="17"/></svg>
+          <span>Узлы сети</span>
+          <span class="nav-badge" id="nodeCount">0</span>
+        </a>
+        <a href="#" class="nav-item" data-view="files">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>Файлы</span>
+        </a>
+        <a href="#" class="nav-item" data-view="chat">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>Чат</span>
+        </a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">Интеграция</div>
+        <a href="#" class="nav-item" data-view="mesh">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/></svg>
+          <span>Mesh сеть</span>
+        </a>
+        <a href="#" class="nav-item" data-view="reticulum">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <span>Reticulum</span>
+        </a>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">Система</div>
+        <a href="#" class="nav-item" data-view="console">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <span>Консоль</span>
+        </a>
+        <a href="#" class="nav-item" data-view="settings">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Настройки</span>
+        </a>
+      </div>
+
+      <div style="margin-top: auto; padding-top: 16px;">
+        <div class="status-bar">
+          <span class="status-dot" id="connectionStatus"></span>
+          <span style="font-size: 12px; color: var(--text-secondary);" id="connectionText">Подключено</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main content -->
+    <main class="main">
+      <header class="header">
+        <h1 class="header-title" id="pageTitle">Панель управления</h1>
+        <div class="header-actions">
+          <button class="btn btn-secondary" id="refreshBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Обновить
+          </button>
+          <button class="btn btn-primary" id="startServerBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Запустить сервер
+          </button>
+        </div>
+      </header>
+
+      <div class="content" id="content">
+        <!-- Dashboard view -->
+        <div id="view-dashboard">
+          <div class="status-bar">
+            <span class="status-dot online"></span>
+            <span>Сервер активен и готов к работе</span>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Состояние сети</h2>
+            </div>
+            <div class="stats">
+              <div class="stat-card">
+                <div class="stat-value" id="statNodes">0</div>
+                <div class="stat-label">Узлов онлайн</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statFiles">0</div>
+                <div class="stat-label">Файлов</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statMessages">0</div>
+                <div class="stat-label">Сообщений</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statUptime">0ч</div>
+                <div class="stat-label">Время работы</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Быстрые действия</h2>
+            </div>
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              <button class="btn btn-primary" onclick="showModal('addNode')">Добавить узел</button>
+              <button class="btn btn-secondary" onclick="navigate('nodes')">Управление узлами</button>
+              <button class="btn btn-secondary" onclick="navigate('mesh')">Настройка Mesh</button>
+              <button class="btn btn-secondary" onclick="navigate('console')">Логи системы</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Активные узлы</h2>
+              <button class="btn btn-secondary" onclick="navigate('nodes')">Все узлы →</button>
+            </div>
+            <ul class="node-list" id="quickNodeList">
+              <li class="empty">
+                <div class="empty-icon">📡</div>
+                <p>Нет активных узлов</p>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Nodes view -->
+        <div id="view-nodes" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Узлы сети</h2>
+              <button class="btn btn-primary" onclick="showModal('addNode')">+ Добавить узел</button>
+            </div>
+            <ul class="node-list" id="fullNodeList">
+              <li class="empty">Загрузка...</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Files view -->
+        <div id="view-files" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Файлы в сети</h2>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-secondary" id="showAllFilesBtn" onclick="loadFiles(true)">Все узлы</button>
+                <button class="btn btn-primary" onclick="document.getElementById('fileUploadInput').click()">+ Загрузить</button>
+                <input type="file" id="fileUploadInput" style="display:none" onchange="uploadFile(this)">
+              </div>
+            </div>
+            <div id="uploadProgress" style="display:none;padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                <span id="uploadFileName" style="font-size:12px;">Загрузка...</span>
+                <span id="uploadPercent" style="font-size:12px;font-weight:600;">0%</span>
+              </div>
+              <div style="height:6px;background:var(--border-normal);border-radius:3px;overflow:hidden;">
+                <div id="uploadBar" style="height:100%;width:0%;background:var(--accent);transition:width 0.2s;border-radius:3px;"></div>
+              </div>
+            </div>
+            <div id="downloadProgress" style="display:none;padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                <span id="downloadFileName" style="font-size:12px;">Скачивание...</span>
+                <span id="downloadPercent" style="font-size:12px;font-weight:600;">0%</span>
+              </div>
+              <div style="height:6px;background:var(--border-normal);border-radius:3px;overflow:hidden;">
+                <div id="downloadBar" style="height:100%;width:0%;background:var(--status-ok);transition:width 0.2s;border-radius:3px;"></div>
+              </div>
+            </div>
+            <ul class="node-list" id="fileList">
+              <li class="empty">Загрузка...</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Chat view -->
+        <div id="view-chat" style="display: none;">
+          <div class="card" style="display:flex;flex-direction:column;height:calc(100vh - 120px);">
+            <div class="card-header">
+              <h2 class="card-title">Чат сети</h2>
+              <span id="chatStatus" style="font-size:12px;color:var(--text-muted);">Подключение...</span>
+            </div>
+            <div id="chatContacts" style="width:200px;border-right:1px solid var(--border-normal);padding:8px;overflow-y:auto;flex-shrink:0;">
+              <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;padding:4px 8px;">Контакты</div>
+              <div id="contactList"></div>
+            </div>
+            <div id="chatMessages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;">
+              <div style="text-align:center;color:var(--text-muted);font-size:12px;padding:40px;">Подключитесь к серверу для начала общения</div>
+            </div>
+            <div id="chatInput" style="display:none;padding:12px;border-top:1px solid var(--border-normal);">
+              <div style="display:flex;gap:8px;">
+                <input type="text" id="messageInput" placeholder="Введите сообщение..." style="flex:1;" onkeydown="if(event.key==='Enter')sendMessage()">
+                <button class="btn btn-primary" onclick="sendMessage()">Отправить</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mesh view -->
+        <div id="view-mesh" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Mesh сеть</h2>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Статус Reticulum</label>
+                <div class="status-bar" style="margin: 0;">
+                  <span class="status-dot offline" id="reticulumStatus"></span>
+                  <span id="reticulumText">Не подключено</span>
+                </div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Адрес LocalServer</label>
+                <input type="text" id="localserverHost" placeholder="localhost" value="localhost">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Порт</label>
+                <input type="number" id="localserverPort" placeholder="3847" value="3847">
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="connectToReticulum()">Подключить</button>
+          </div>
+        </div>
+
+        <!-- Reticulum view -->
+        <div id="view-reticulum" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Reticulum совместимость</h2>
+            </div>
+            <p style="color: var(--text-secondary); margin-bottom: 16px;">
+              LocalServer с Reticulum+ протоколом обеспечивает совместимость с сетями Reticulum и NomadNet.
+            </p>
+            <div class="stats">
+              <div class="stat-card">
+                <div class="stat-value" id="retNodes">0</div>
+                <div class="stat-label">Reticulum узлов</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="retRoutes">0</div>
+                <div class="stat-label">Маршрутов</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Console view -->
+        <div id="view-console" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Системный журнал</h2>
+              <button class="btn btn-secondary" onclick="clearConsole()">Очистить</button>
+            </div>
+            <div class="console" id="consoleOutput">
+              <div class="console-line"><span class="console-time">[SYSTEM]</span><span class="console-info">Intra Network запущен</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings view -->
+        <div id="view-settings" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Настройки</h2>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Имя узла</label>
+              <input type="text" id="nodeName" value="IntraNode">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">HTTP порт</label>
+                <input type="number" id="httpPort" value="3847">
+              </div>
+              <div class="form-group">
+                <label class="form-label">WebSocket порт</label>
+                <input type="number" id="wsPort" value="3848">
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="saveSettings()">Сохранить настройки</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Add Node Modal -->
+  <div class="modal-overlay" id="modal-addNode">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Добавить узел</h3>
+        <button class="modal-close" onclick="closeModal('addNode')">×</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">IP адрес или хост</label>
+        <input type="text" id="peerHost" placeholder="192.168.1.100">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Порт</label>
+          <input type="number" id="peerPort" value="3847">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Имя узла</label>
+          <input type="text" id="peerName" placeholder="ПК друга">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('addNode')">Отмена</button>
+        <button class="btn btn-primary" onclick="addNode()">Добавить</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+    let currentView = 'dashboard';
+    let consoleLines = [];
+
+    // Navigation
+    function navigate(view) {
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.dataset.view === view) item.classList.add('active');
+      });
+
+      document.querySelectorAll('[id^="view-"]').forEach(v => v.style.display = 'none');
+      document.getElementById('view-' + view).style.display = 'block';
+
+      const titles = {
+        dashboard: 'Панель управления',
+        nodes: 'Узлы сети',
+        files: 'Файлы',
+        chat: 'Чат',
+        mesh: 'Mesh сеть',
+        reticulum: 'Reticulum',
+        console: 'Консоль',
+        settings: 'Настройки'
+      };
+      document.getElementById('pageTitle').textContent = titles[view] || 'Intra Network';
+      currentView = view;
+
+      loadViewData(view);
+    }
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigate(item.dataset.view);
+      });
+    });
+
+    // Load data for each view
+    async function loadViewData(view) {
+      switch(view) {
+        case 'dashboard': await loadDashboard(); break;
+        case 'nodes': await loadNodes(); break;
+        case 'files': await loadFiles(false); break;
+        case 'mesh': await loadMeshStatus(); break;
+        case 'console': await loadConsole(); break;
+      }
+    }
+
+    // Dashboard
+    async function loadDashboard() {
+      try {
+        const [statusRes, nodesRes] = await Promise.all([
+          fetch('/api/status'),
+          fetch('/api/nodes')
+        ]);
+        const status = await statusRes.json();
+        const nodes = await nodesRes.json();
+
+        document.getElementById('statNodes').textContent = nodes.nodes?.length || 0;
+        document.getElementById('nodeCount').textContent = nodes.nodes?.length || 0;
+
+        const onlineNodes = (nodes.nodes || []).filter(n => n.online);
+        const list = document.getElementById('quickNodeList');
+        if (onlineNodes.length === 0) {
+          list.innerHTML = '<li class="empty"><p>Нет активных узлов</p></li>';
+        } else {
+          list.innerHTML = onlineNodes.slice(0, 3).map(n => `
+            <li class="node-item">
+              <span class="node-status online"></span>
+              <div class="node-info">
+                <div class="node-name">${n.name}</div>
+                <div class="node-details">${n.host}:${n.port}</div>
+              </div>
+            </li>
+          `).join('');
+        }
+
+        logToConsole('info', 'Dashboard loaded');
+      } catch(e) { logToConsole('error', 'Failed to load dashboard: ' + e.message); }
+    }
+
+    // Nodes
+    async function loadNodes() {
+      try {
+        const res = await fetch('/api/nodes');
+        const data = await res.json();
+        const list = document.getElementById('fullNodeList');
+
+        if (!data.nodes || data.nodes.length === 0) {
+          list.innerHTML = '<li class="empty"><p>Нет узлов</p></li>';
+          return;
+        }
+
+        list.innerHTML = data.nodes.map(n => `
+          <li class="node-item">
+            <span class="node-status ${n.online ? 'online' : 'offline'}"></span>
+            <div class="node-info">
+              <div class="node-name">${n.name}</div>
+              <div class="node-details">${n.host}:${n.port}</div>
+            </div>
+            <div class="node-actions">
+              <button class="node-action" title="Пинг">📡</button>
+              <button class="node-action" title="Удалить">🗑️</button>
+            </div>
+          </li>
+        `).join('');
+      } catch(e) { logToConsole('error', 'Failed to load nodes: ' + e.message); }
+    }
+
+    // Mesh status
+    async function loadMeshStatus() {
+      // Check reticulum connection
+      const statusDot = document.getElementById('reticulumStatus');
+      const statusText = document.getElementById('reticulumText');
+
+      fetch('/.nodeid').then(r => {
+        if (r.ok) {
+          statusDot.className = 'status-dot online';
+          statusText.textContent = 'Подключено';
+        } else {
+          statusDot.className = 'status-dot offline';
+          statusText.textContent = 'Не подключено';
+        }
+      }).catch(() => {
+        statusDot.className = 'status-dot offline';
+        statusText.textContent = 'Не подключено';
+      });
+    }
+
+    // Console
+    async function loadConsole() {
+      const output = document.getElementById('consoleOutput');
+      output.innerHTML = consoleLines.map(l => 
+        `<div class="console-line"><span class="console-time">[${l.time}]</span><span class="console-${l.type}">${l.msg}</span></div>`
+      ).join('');
+    }
+
+    function logToConsole(type, msg) {
+      const time = new Date().toLocaleTimeString();
+      consoleLines.push({ time, type, msg });
+      if (consoleLines.length > 100) consoleLines.shift();
+      if (currentView === 'console') loadConsole();
+    }
+
+    function clearConsole() {
+      consoleLines = [];
+      loadConsole();
+    }
+
+    // Modal
+    function showModal(id) {
+      document.getElementById('modal-' + id).classList.add('visible');
+    }
+
+    function closeModal(id) {
+      document.getElementById('modal-' + id).classList.remove('visible');
+    }
+
+    function addNode() {
+      const host = document.getElementById('peerHost').value;
+      const port = document.getElementById('peerPort').value;
+      const name = document.getElementById('peerName').value;
+
+      fetch('/api/nodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, port, name })
+      }).then(r => {
+        if (r.ok) {
+          logToConsole('success', 'Node added: ' + (name || host));
+          closeModal('addNode');
+          loadNodes();
+          loadDashboard();
+        }
+      }).catch(e => logToConsole('error', 'Failed to add node: ' + e.message));
+    }
+
+    function connectToReticulum() {
+      const host = document.getElementById('localserverHost').value;
+      const port = document.getElementById('localserverPort').value;
+      logToConsole('info', 'Connecting to Reticulum at ' + host + ':' + port);
+    }
+
+    function saveSettings() {
+      logToConsole('success', 'Settings saved');
+    }
+
+    // Refresh button
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      loadViewData(currentView);
+      logToConsole('info', 'Data refreshed');
+    });
+
+    document.getElementById('startServerBtn').addEventListener('click', () => {
+      logToConsole('info', 'Server is already running');
+    });
+
+    // ========== File management ==========
+
+    async function loadFiles(all = false) {
+      try {
+        const res = await fetch(`/api/files${all ? '?all=true' : ''}`);
+        const data = await res.json();
+        renderFiles(data.files || []);
+        if (all) document.getElementById('showAllFilesBtn').textContent = `Все (${data.remote} удал.)`;
+      } catch (e) {
+        document.getElementById('fileList').innerHTML = `<li class="empty">Ошибка: ${e.message}</li>`;
+      }
+    }
+
+    function renderFiles(files) {
+      const list = document.getElementById('fileList');
+      if (!files.length) { list.innerHTML = '<li class="empty"><div class="empty-icon">📂</div><p>Нет файлов</p></li>'; return; }
+      list.innerHTML = files.map(f => {
+        const size = formatBytes(f.size || 0);
+        const source = f._sourceNode ? ` @${f._sourceNode}` : '';
+        const isRemote = !!f._sourceHost;
+        return `<li class="node-item" style="display:flex;align-items:center;gap:12px;">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <div style="flex:1;">
+            <div class="node-name">${escHtml(f.name || 'file')}<span style="font-weight:400;color:var(--text-muted);font-size:12px;">${source}</span></div>
+            <div class="node-details">${size}${isRemote ? ' • удалённый' : ' • локальный'}</div>
+          </div>
+          <button class="btn btn-secondary" style="font-size:12px;padding:6px 12px;" onclick="downloadFile('${f.id}', '${escHtml(f.name || 'file')}', ${isRemote}, '${f._sourceHost || ''}', ${f._sourcePort || 0})">${isRemote ? 'Скачать' : 'Скачать'}</button>
+          ${!isRemote ? `<button class="btn btn-danger" style="font-size:12px;padding:6px 12px;" onclick="deleteFile('${f.id}')">✕</button>` : ''}
+        </li>`;
+      }).join('');
+    }
+
+    async function uploadFile(input) {
+      const file = input.files[0];
+      if (!file) return;
+
+      const prog = document.getElementById('uploadProgress');
+      const bar = document.getElementById('uploadBar');
+      const pct = document.getElementById('uploadPercent');
+      const name = document.getElementById('uploadFileName');
+      prog.style.display = 'block';
+      name.textContent = file.name;
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/files/upload');
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const p = Math.round(e.loaded / e.total * 100);
+          bar.style.width = p + '%';
+          pct.textContent = p + '%';
+        }
+      };
+      xhr.onload = () => {
+        prog.style.display = 'none';
+        if (xhr.status === 200) { logToConsole('success', 'Uploaded: ' + file.name); loadFiles(); }
+        else { logToConsole('error', 'Upload failed'); }
+        input.value = '';
+      };
+      xhr.onerror = () => { prog.style.display = 'none'; logToConsole('error', 'Upload error'); input.value = ''; };
+      const fd = new FormData();
+      fd.append('file', file);
+      xhr.send(fd);
+    }
+
+    async function downloadFile(fileId, fileName, isRemote, host, port) {
+      if (!isRemote) {
+        // Local file — direct download
+        window.open(`/api/files/${fileId}`, '_blank');
+        return;
+      }
+
+      // Remote file — request through WebSocket
+      const prog = document.getElementById('downloadProgress');
+      const bar = document.getElementById('downloadBar');
+      const pct = document.getElementById('downloadPercent');
+      const name = document.getElementById('downloadFileName');
+      prog.style.display = 'block';
+      name.textContent = fileName;
+
+      // Use direct HTTP proxy through remote node
+      try {
+        const proxyUrl = `/api/files/proxy?host=${encodeURIComponent(host)}&port=${port}&fileId=${fileId}`;
+        const a = document.createElement('a');
+        a.href = proxyUrl;
+        a.download = fileName;
+        a.click();
+        prog.style.display = 'none';
+        logToConsole('success', 'Downloaded: ' + fileName);
+      } catch (e) {
+        prog.style.display = 'none';
+        logToConsole('error', 'Download failed: ' + e.message);
+      }
+    }
+
+    async function deleteFile(fileId) {
+      if (!confirm('Удалить файл?')) return;
+      const res = await fetch(`/api/files/${fileId}`, { method: 'DELETE' });
+      if (res.ok) { logToConsole('info', 'File deleted'); loadFiles(); }
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes) return '0 B';
+      const k = 1024; const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function escHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    // Initial load
+    loadDashboard();
+
+    // Auto-refresh
+    setInterval(() => {
+      if (currentView === 'dashboard') loadDashboard();
+    }, 10000);
+
+    // ========== Real-time Chat via WebSocket ==========
+
+    let chatWs = null;
+    let chatNodeId = null;
+
+    function connectChat() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const url = proto + '://' + location.host + ':' + (location.port ? location.port : '3848');
+
+      chatWs = new WebSocket(url);
+
+      chatWs.onopen = () => {
+        document.getElementById('chatStatus').textContent = 'Подключено';
+        document.getElementById('chatStatus').style.color = 'var(--status-ok)';
+        document.getElementById('chatInput').style.display = 'flex';
+        logToConsole('success', 'Chat WebSocket connected');
+      };
+
+      chatWs.onclose = () => {
+        document.getElementById('chatStatus').textContent = 'Отключено';
+        document.getElementById('chatStatus').style.color = 'var(--status-err)';
+        document.getElementById('chatInput').style.display = 'none';
+        logToConsole('warn', 'Chat disconnected, reconnecting...');
+        setTimeout(connectChat, 3000);
+      };
+
+      chatWs.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data);
+          handleChatWsMessage(msg);
+        } catch (e) { /* ignore */ }
+      };
+    }
+
+    function handleChatWsMessage(msg) {
+      if (msg.type === 'welcome') {
+        chatNodeId = msg.nodeId;
+        // Register ourselves
+        chatWs.send(JSON.stringify({
+          type: 'register',
+          payload: { nodeId: 'ui-client-' + Date.now(), nodeName: 'Web UI' }
+        }));
+        loadChatContacts();
+      } else if (msg.type === 'message') {
+        appendChatMessage(msg.message);
+      } else if (msg.type === 'broadcast') {
+        appendChatMessage({
+          sender_id: msg.senderId || 'broadcast',
+          sender_name: msg.senderName || 'Unknown',
+          content: msg.content,
+          timestamp: Date.now() / 1000,
+          type: 'broadcast'
+        });
+      }
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const content = input.value.trim();
+      if (!content || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+
+      chatWs.send(JSON.stringify({
+        type: 'broadcast',
+        payload: { content, channel: 'general' }
+      }));
+
+      input.value = '';
+    }
+
+    async function loadChatContacts() {
+      try {
+        const res = await fetch('/api/messages/contacts');
+        const data = await res.json();
+        renderChatContacts(data.contacts || []);
+      } catch (e) { /* ignore */ }
+    }
+
+    function renderChatContacts(contacts) {
+      const list = document.getElementById('contactList');
+      if (!contacts.length) {
+        list.innerHTML = '<div style="padding:8px;font-size:12px;color:var(--text-muted);">Нет контактов</div>';
+        return;
+      }
+      list.innerHTML = contacts.map(c => `
+        <div style="padding:8px;cursor:pointer;border-radius:6px;" onclick="loadConversation('${c.nodeId || c.contact_id}')"
+             onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">
+          <div style="font-weight:600;font-size:13px;">${escHtml((c.nodeId || c.contact_id || '').substring(0, 8))}</div>
+          <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${escHtml((c.lastMessage?.content || '').substring(0, 30))}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function appendChatMessage(msg) {
+      const container = document.getElementById('chatMessages');
+      const isMe = msg.sender_id === chatNodeId || (msg.sender_id || '').includes('ui-client');
+      const div = document.createElement('div');
+      div.style.cssText = `display:flex;flex-direction:column;${isMe ? 'align-items:flex-end;' : 'align-items:flex-start;'}`;
+      div.innerHTML = `
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px;">${isMe ? 'Вы' : escHtml(msg.sender_name || msg.sender_id || 'Unknown')}</div>
+        <div style="max-width:70%;padding:8px 12px;border-radius:12px;font-size:13px;word-break:break-word;
+          ${isMe ? 'background:var(--accent);color:white;border-bottom-right-radius:4px;' : 'background:var(--bg-secondary);border-bottom-left-radius:4px;'}">
+          ${escHtml(msg.content || '')}
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${new Date((msg.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString()}</div>
+      `;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    async function loadConversation(nodeId) {
+      try {
+        const res = await fetch(`/api/messages/${nodeId}`);
+        const data = await res.json();
+        const container = document.getElementById('chatMessages');
+        container.innerHTML = '';
+        (data.messages || []).forEach(appendChatMessage);
+      } catch (e) { /* ignore */ }
+    }
+
+    // Start chat connection
+    connectChat();
+  </script>
+</body>
+</html>
